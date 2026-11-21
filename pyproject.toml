@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "coi-form-digitizer"
 version = "0.1.0"
-description = "Cyfryzacja formularzy (Wyzwanie COI) - lokalny pipeline AI/OCR + wizualizator e-Uslugi, 100% offline"
+description = "Cyfryzacja formularzy (Wyzwanie COI) - pipeline AI/OCR na otwartych modelach (CPU) + wizualizator e-Uslugi"
 readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }

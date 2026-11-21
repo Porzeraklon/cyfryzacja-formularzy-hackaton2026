@@ -134,15 +134,15 @@ Niezweryfikowane:
 
 - **Jakość ekstrakcji na prawdziwym dużym modelu** — stub dowodzi okablowania, nie jakości.
 - Smoke na `llama_cpp.server` — wymagałby dodatkowego pakietu `sse_starlette` (nieinstalowany).
-- Wierność względem referencji COI: pkt 1–2 zrobione, pkt 3–4 nierobione.
+- Wierność względem referencji COI: zrobione (strona „Dane wnioskodawcy”, strona sprawy wzorca nadpłaty,
+  „Dane do kontaktu” i „Zgoda” wg Standardów) — branch `feat/coi-dokonczenie`.
 - Lokalny koszt CPU dla Qwen3-4B: 156–655 s na formularz (pomiar wcześniejszy).
 
 ## 6. Ograniczenia i pułapki
 
-- **Reguła NFR „100% offline” a tryb api**: dokumentacja (AGENTS.md, README, docs/ARCHITECTURE.md,
-  opis w pyproject) nadal mówi „100% offline”. To **świadoma decyzja**, żeby na tym branchu ich
-  nie ruszać; tryb api jest opisany tylko tutaj i w komentarzach `.env.example`. Nie „naprawiać”
-  tej sprzeczności bez zgody. Pozostałe NFR-y obowiązują: wyłącznie licencje permisywne
+- **Reguła o modelach** (AGENTS.md, README, docs/ARCHITECTURE.md): tylko modele z otwartymi wagami,
+  na CPU; domyślnie lokalnie, tryb api dopuszczalny wyłącznie dla otwartego modelu, który da się
+  postawić na własnej infrastrukturze. Pozostałe NFR-y obowiązują: wyłącznie licencje permisywne
   (zakaz GPL/AGPL/LGPL, w szczególności PyMuPDF), pliki użytkownika tylko w RAM, Docker
   non-root uid=10001, sekrety wyłącznie przez ENV w runtime.
 - **Własność**: `backend/app/modules/` + `data/` = Branch 1; `frontend/` = Branch 2;

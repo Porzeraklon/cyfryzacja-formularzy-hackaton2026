@@ -12,9 +12,10 @@ w ustrukturyzowaną e-Uługę COI:
 4. **Eksport i wizualizacja** — `FormDefinition` w oficjalnym formacie COI + webowy wizualizator
    e-Uługi (czysty vanilla HTML/CSS/JS, zero frameworków i bundlerów).
 
-Domyślnie **100% offline** (`LLM_BACKEND=local`): zero wywołań zewnętrznych API w runtime.
-Opcjonalny tryb `LLM_BACKEND=api` podpina duży model postawiony na serwerach urzędu
-(endpoint OpenAI-compatible, np. vLLM) — patrz [Konfiguracja](#3-konfiguracja).
+Domyślnie **lokalnie na CPU** (`LLM_BACKEND=local`, bez GPU): zero wywołań zewnętrznych usług w runtime.
+Opcjonalny tryb `LLM_BACKEND=api` podpina model z **otwartymi wagami** postawiony na własnej
+infrastrukturze (endpoint OpenAI-compatible, np. vLLM, także w chmurze) — modele dostępne wyłącznie
+przez API są wykluczone. Patrz [Konfiguracja](#3-konfiguracja).
 Wyłącznie licencje permisywne (MIT/Apache-2.0/BSD/ISC/PSF/MPL-2.0), Docker non-root.
 
 ---
@@ -63,7 +64,7 @@ docker compose up --build
 Wolumeny: `./data:/app/data:ro` (baza słowników COI) oraz `models_data:/app/models:ro`
 (katalog na lokalne wagi AI — pusty w trybie mock).
 
-### B. Lokalnie z realnym pipeline AI (tryb konkursowy, 100% offline)
+### B. Lokalnie z realnym pipeline AI (tryb konkursowy, CPU, bez sieci)
 
 Wymagany Python **3.13+** (host deweloperski 3.13; obraz Dockera celuje w 3.14):
 
@@ -99,7 +100,8 @@ a `convert` zwraca **503 `PIPELINE_NOT_READY`** z instrukcją naprawy (bez ciche
 ### C. Opcjonalnie: duży LLM na endpointcie OpenAI-compatible (`LLM_BACKEND=api`)
 
 Gdy urząd dysponuje własnym serwerem modelu (vLLM, llama.cpp server…), aplikacja może zamiast
-lokalnego GGUF wołać ten endpoint — **wyłącznie wskazany adres**, bez chmury publicznej:
+lokalnego GGUF wołać ten endpoint — **wyłącznie wskazany adres** i wyłącznie model z otwartymi wagami,
+który da się uruchomić na własnej infrastrukturze (np. Qwen, Bielik, Llama na licencji permisywnej):
 
 ```dotenv
 USE_MOCK_PIPELINE=false
@@ -140,6 +142,8 @@ wzorzec: `.env.example`). Sekrety nigdy nie trafiają do obrazu Dockera ani repo
 | `LLM_API_KEY` | — | klucz Bearer (SecretStr; redagowany w błędach, niewidoczny w repr) |
 | `LLM_MODEL` | — | nazwa modelu na endpointcie (wymagana w trybie `api`) |
 | `LLM_TIMEOUT_SECONDS` | `600` | timeout żądania do endpointu (połączenie: 10 s) |
+| `LLM_THREADS` | `0` | tryb local: wątki llama.cpp (0 = wszystkie rdzenie logiczne) |
+| `LLM_CTX` | `8192` | tryb local: rozmiar kontekstu modelu GGUF |
 | `LLM_RESPONSE_FORMAT` | `json_object` | `json_schema` (strict, zalecane) / `json_object` / `none` |
 | `MAX_FILE_SIZE_BYTES` | `20971520` | limit rozmiaru pojedynczego pliku (20 MB) |
 | `MAX_BATCH_FILES` | `20` | limit plików w `convert-batch` |
@@ -175,7 +179,8 @@ nagłówka `Authorization: Bearer <JWT>` (token testowy: `POST /auth/dev-token` 
 | POST | `/forms/convert` | multipart `file` → pełna konwersja: `FormDocumentSchema` + `FormDefinition` |
 | POST | `/forms/convert-batch` | multipart `files` (≤ `MAX_BATCH_FILES`) → wynik per plik + podsumowanie |
 | POST | `/forms/validate-json` | walidacja JSON względem schematu COI + spójność flows/słowników |
-| POST | `/forms/export-formdefinition` | `FormDocumentSchema` → oficjalny `FormDefinition` COI + notatki |
+| POST | `/forms/export-formdefinition` | `FormDocumentSchema` → oficjalny `FormDefinition` COI + notatki + uwagi walidatora |
+| POST | `/forms/validate-formdefinition` | walidacja `FormDefinition`: schemat JSON, reguły 1–12 z Reguł technicznych, Standardy |
 | POST | `/forms/validate-field` | walidacja pojedynczej wartości (PESEL, NIP, REGON, ZIP_CODE, EMAIL, EPUAP, ADE…) |
 | GET | `/dictionaries` | lista lokalnych słowników COI |
 | GET | `/dictionaries/{id}` | pozycje słownika (404 `NOT_FOUND` dla nieznanego id) |
@@ -191,6 +196,7 @@ nagłówka `Authorization: Bearer <JWT>` (token testowy: `POST /auth/dev-token` 
                   options, repeatable_group (kolumny w fields), help_text */ ]
   },
   "form_definition": { /* eksport w oficjalnym formacie COI (tabs, questions, dictionaries) */ },
+  "form_definition_issues": [ /* uwagi walidatora reguł 1–12: {level, path, rule, message}; [] = zgodny */ ],
   "processing": {
     "filename": "wniosek.pdf", "mime_type": "application/pdf", "size_bytes": 12345,
     "processing_time_ms": 42000.0, "pipeline_mode": "real", "pages_count": 4, "fields_count": 66
@@ -235,7 +241,7 @@ curl http://localhost:8000/api/v1/health
 ## Testy i jakość
 
 ```bash
-pytest          # 124 testy: bezpieczeństwo plików, kontrakty API, backend LLM, licencje
+pytest          #  testów: bezpieczeństwo plików, kontrakty API, walidatory, reguły 1–12, backend LLM, licencje
 ruff check backend/ && ruff format --check backend/
 ```
 
@@ -243,6 +249,15 @@ ruff check backend/ && ruff format --check backend/
 - `test_api_contracts.py` — wszystkie endpointy (convert, batch, validate-json/field, dictionaries, JWT).
 - `test_llm_backend.py` / `test_extractor_llm.py` — przełącznik backendu, klient api i ekstrakcja:
   **zero sieci i zero modelu** (`httpx.MockTransport`, fałszywe GGUF).
+- `test_form_definition_validation.py` — reguły 1–12 FormDefinition (każda łapana na zepsutym wariancie).
+- `test_field_validation.py` — sumy kontrolne PESEL/NIP/REGON/dowód i formaty ZIP_CODE/EMAIL/EPUAP/ADE.
+
+Pomiar jakości i czasu na prawdziwych formularzach (wymaga modelu; referencje `<plik>.reference.json`):
+
+```bash
+python -m backend.app.modules.ai_extractor.eval_quality testowe-formularze --report docs/jakosc-ekstrakcji.md
+```
+
 - `test_licenses.py` — **oblewa przy GPL/AGPL/LGPL** wśród zainstalowanych pakietów (`pip-licenses`);
   dual-license wyłącznie przez świadomą allowlistę (obecnie `odfpy` → Apache-2.0).
 

@@ -4,7 +4,7 @@
 
 - **MVP = 100% zakresu COI**: batch processing, lokalne AI/OCR, słowniki (mapowanie + propozycje),
   przepływy warunkowe, zaawansowana walidacja (PESEL/NIP/REGON/telefon/kod), GUI z wizualizacją e-Usługi.
-- **100% offline w runtime**: zero zewnętrznych API, chmurowych LLM, MCP i SaaS. Modele lokalnie w `MODELS_DIR`.
+- **Otwarte modele, CPU**: Modele językowe wyłącznie z otwartymi wagami, możliwe do uruchomienia na własnej infrastrukturze, na CPU (maszyna docelowa nie ma GPU). Domyślnie lokalnie (`LLM_BACKEND=local`, wagi GGUF w `MODELS_DIR`, pobierane ręcznie poza runtime). Dopuszczalne wołanie przez API (`LLM_BACKEND=api`, także w chmurze) tylko modelu otwartego, który da się postawić u siebie; zakaz modeli dostępnych wyłącznie przez API oraz zewnętrznych usług SaaS/MCP.
 - **Zero copyleft**: wyłącznie MIT / Apache-2.0 / BSD / ISC / PSF / MPL-2.0. Zakaz GPL/AGPL
   (dlatego `pypdf`/`pdfplumber`/`pypdfium2`, a **nie** `PyMuPDF`). Test `test_licenses.py` egzekwuje to w CI.
 - **Ulotne przetwarzanie (RAM-only)**: pliki żyją wyłącznie jako `bytes`/`BytesIO` w cyklu życia żądania.
@@ -102,4 +102,4 @@ main (core: kontrakty + API + mock + GUI szkielet + testy)
 2. Branch 1 rozwija parsery/OCR/LLM/słowniki, testuje przez `USE_MOCK_PIPELINE=false` + pytest.
 3. Branch 2 rozwija GUI/wizualizator przeciwko **działającym mock endpointom** (pełne end-to-end od dnia 1).
 4. Merge: najpierw Branch 1 (backend), potem Branch 2 — zbiory plików rozłączne, więc zero konfliktów.
-5. Po merge: `USE_MOCK_PIPELINE=false`, wagi modeli w wolumenie `models_data`, pełny pipeline offline.
+5. Po merge: `USE_MOCK_PIPELINE=false`, wagi modeli w wolumenie `models_data`, pełny pipeline lokalnie (albo `LLM_BACKEND=api` z otwartym modelem).

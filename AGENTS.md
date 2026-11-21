@@ -6,7 +6,7 @@ Projekt konkursowy (Wyzwanie COI). Dokumentacja i komunikaty commitów po polsku
 
 ## Twarde reguły konkursowe (NFR — nie łamać)
 
-- Aplikacja działa w 100% offline: zakaz wywołań zewnętrznych API, chmurowych LLM, MCP, SaaS. Modele AI/OCR wyłącznie lokalne (`MODELS_DIR`, wagi pobierane ręcznie poza runtime).
+- Modele językowe wyłącznie z otwartymi wagami, możliwe do uruchomienia na własnej infrastrukturze, na CPU (maszyna docelowa nie ma GPU). Domyślnie lokalnie (`LLM_BACKEND=local`, wagi GGUF w `MODELS_DIR`, pobierane ręcznie poza runtime). Dopuszczalne wołanie przez API (`LLM_BACKEND=api`, także w chmurze) tylko modelu otwartego, który da się postawić u siebie; zakaz modeli dostępnych wyłącznie przez API oraz zewnętrznych usług SaaS/MCP. OCR wyłącznie lokalny.
 - Wyłącznie licencje permisywne (MIT, Apache-2.0, BSD, ISC, PSF, MPL-2.0). Zakaz GPL/AGPL/LGPL — w szczególności PyMuPDF/fitz. `test_licenses.py` oblewa przy naruszeniu (skanuje zainstalowane pakiety przez pip-licenses). Dual-license tylko przez świadomą allowlistę w tym teście (obecnie: `odfpy`).
 - Nowe zależności: ciężkie AI/OCR/LLM → extras `[ai]`/`[llm]`, nie do dependencies core; przy każdej pozycji komentarz z licencją.
 - Pliki użytkowników przetwarzane wyłącznie w RAM (BytesIO, cykl życia żądania) — zero trwałego zapisu na dysk.
