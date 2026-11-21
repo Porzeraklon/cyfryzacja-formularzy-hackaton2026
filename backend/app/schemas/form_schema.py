@@ -136,17 +136,16 @@ class FieldDefinition(_ContractModel):
 
     @model_validator(mode="after")
     def _check_initial_data(self) -> "FieldDefinition":
-        # Dane inicjalne (PESEL/PESEL_ADDRESS/MLPZ): pole z rejestru musi być tylko do odczytu.
-        if self.default_value_type == "EXTERNAL_SYSTEM":
-            if not self.read_only:
-                raise ValueError("Pole zasilane z rejestru (EXTERNAL_SYSTEM) musi mieć read_only=True.")
-            if not isinstance(self.initial_value, str) or not re.fullmatch(
-                r"(?:PESEL|PESEL_ADDRESS|MLPZ)\.[A-Za-z]+", self.initial_value
-            ):
-                raise ValueError(
-                    "initial_value dla EXTERNAL_SYSTEM musi mieć format ŹRÓDŁO.atrybut "
-                    "(PESEL/PESEL_ADDRESS/MLPZ)."
-                )
+        # Dane inicjalne (PESEL/PESEL_ADDRESS/MLPZ). Tylko do odczytu bywają dane tożsamości
+        # („Twoje dane”), ale Standardy („Dane do kontaktu”) zasilają z MLPZ także pola edytowalne
+        # (telefon, e-mail: „Możesz je zmienić lub usunąć”), więc read_only nie jest tu wymuszane.
+        if self.default_value_type == "EXTERNAL_SYSTEM" and (
+            not isinstance(self.initial_value, str)
+            or not re.fullmatch(r"(?:PESEL|PESEL_ADDRESS|MLPZ)\.[A-Za-z]+", self.initial_value)
+        ):
+            raise ValueError(
+                "initial_value dla EXTERNAL_SYSTEM musi mieć format ŹRÓDŁO.atrybut (PESEL/PESEL_ADDRESS/MLPZ)."
+            )
         return self
 
 

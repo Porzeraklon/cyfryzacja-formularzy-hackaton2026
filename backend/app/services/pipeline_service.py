@@ -74,11 +74,13 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
             ai_agent_ready=True,
         ),
         pages=[
+            # Strona 2 referencji COI („Nadpłata i deklaracja podatkowa”) - 1:1 z wizualizacją
+            # „Wniosek o stwierdzenie nadpłaty podatku” (materiały konkursowe).
             PageDefinition(
                 page_id="page_sprawa",
                 title="Nadpłata i deklaracja",
                 order=1,
-                description="Przedmiot nadpłaty, okresy, rozliczenie i korekta deklaracji.",
+                description="Informacje o nadpłacie, sposób jej rozliczenia i korekta deklaracji.",
                 sections=[
                     SectionDefinition(
                         section_id="informacje_o_nadplacie",
@@ -88,7 +90,7 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                             _field("podatek", "Podatek, którego dotyczy nadpłata", required=True),
                             _field(
                                 "kwota",
-                                "Kwota nadpłaty",
+                                "Kwota",
                                 FieldType.NUMBER,
                                 required=True,
                                 placeholder="Kwota w złotych, np. 120,50",
@@ -97,48 +99,28 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                                 "uzasadnienie_info",
                                 "",
                                 FieldType.TEXT_BLOCK,
-                                help_text="Opisz krótko, skąd wynika nadpłata.",
+                                help_text=(
+                                    "Uzasadnij dlaczego Twoim zdaniem powstała nadpłata i z czego wynika "
+                                    "jej wysokość."
+                                ),
                             ),
                             _field(
                                 "uzasadnienie",
                                 "Uzasadnienie",
                                 FieldType.TEXTAREA,
                                 required=True,
-                                validation_rules=ValidationRules(min_length=10, max_length=2000),
-                            ),
-                        ],
-                    ),
-                    SectionDefinition(
-                        section_id="sekcja_okresy",
-                        title="Okresy nadpłaty",
-                        order=2,
-                        fields=[
-                            _field(
-                                "okresy_nadplaty",
-                                "Okresy, których dotyczy nadpłata",
-                                FieldType.REPEATABLE_GROUP,
-                                help_text="Dodaj każdy rok, w którym powstała nadpłata.",
-                                fields=[
-                                    _field("okres_rok", "Rok", FieldType.NUMBER, required=True),
-                                    _field("okres_data_deklaracji", "Data deklaracji", FieldType.DATE),
-                                    _field(
-                                        "okres_kwota",
-                                        "Kwota nadpłaty w okresie",
-                                        FieldType.NUMBER,
-                                        required=True,
-                                    ),
-                                ],
+                                validation_rules=ValidationRules(max_length=8000),
                             ),
                         ],
                     ),
                     SectionDefinition(
                         section_id="rozliczenie_nadplaty",
                         title="Rozliczenie nadpłaty",
-                        order=3,
+                        order=2,
                         fields=[
                             _field(
                                 "co_z_nadplata",
-                                "Co zrobić z nadpłatą?",
+                                "Wybierz, co mamy zrobić z nadpłatą",
                                 FieldType.RADIO,
                                 required=True,
                                 options=[
@@ -146,98 +128,37 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                                     DictionaryItem(code="zwrot", label=_ZWROT),
                                 ],
                             ),
-                            _field(
-                                "nazwa_podatku",
-                                "Nazwa podatku",
-                                required=True,
-                                dependencies=[_show("co_z_nadplata", _ZALICZYC, "nazwa_podatku")],
-                            ),
-                            _field(
-                                "numer_rachunku",
-                                "Numer rachunku bankowy",
-                                required=True,
-                                dependencies=[_show("co_z_nadplata", _ZWROT, "numer_rachunku")],
-                            ),
+                            _field("nazwa_podatku", "Nazwa podatku", required=True),
+                            _field("numer_rachunku", "Numer rachunku", required=True),
                         ],
                     ),
                     SectionDefinition(
                         section_id="korekta_deklaracji",
                         title="Korekta deklaracji",
-                        order=4,
+                        order=3,
                         fields=[
                             _field(
                                 "korekta_info",
                                 "",
                                 FieldType.TEXT_BLOCK,
-                                help_text="Dołącz deklarację, której dotyczy korekta.",
-                            ),
-                            _field("plik_deklaracji", "Plik deklaracji", FieldType.FILE, required=True),
-                        ],
-                    ),
-                    SectionDefinition(
-                        section_id="oswiadczenia_sprawy",
-                        title="Oświadczenia",
-                        order=5,
-                        fields=[
-                            _field(
-                                "osw_prawdziwosc",
-                                "Oświadczam, że dane podane we wniosku są zgodne z prawdą.",
-                                FieldType.CHECKBOX,
-                                required=True,
+                                help_text=(
+                                    "Załącz poprawioną deklarację podatkową, z której wynika prawidłowa, "
+                                    "niższa wysokość zobowiązania podatkowego, a w konsekwencji nadpłata."
+                                ),
                             ),
                             _field(
-                                "osw_zgoda",
-                                "Wyrażam zgodę na przetwarzanie danych osobowych.",
-                                FieldType.CHECKBOX,
-                                required=True,
+                                "plik_deklaracji", "Plik deklaracji podatkowej", FieldType.FILE, required=True
                             ),
                         ],
                     ),
                 ],
             )
         ],
+        # Stany dynamiczne z wizualizacji: pola „Nazwa podatku” / „Numer rachunku” zależne od
+        # wyboru w „Wybierz, co mamy zrobić z nadpłatą” (warunek jsonata SHOW).
         conditional_flows=[
-            ConditionalFlow(
-                source_field_id="kwota",
-                operator=ConditionOperator.GREATER_THAN,
-                value=1000,
-                target_type=TargetType.FIELD,
-                target_id="nazwa_podatku",
-                action=FlowAction.SHOW,
-            ),
-            ConditionalFlow(
-                source_field_id="co_z_nadplata",
-                operator=ConditionOperator.IN,
-                value=[_ZALICZYC, _ZWROT],
-                target_type=TargetType.SECTION,
-                target_id="korekta_deklaracji",
-                action=FlowAction.SHOW,
-            ),
-            ConditionalFlow(
-                source_field_id="uzasadnienie",
-                operator=ConditionOperator.IS_EMPTY,
-                value=None,
-                target_type=TargetType.FIELD,
-                target_id="plik_deklaracji",
-                action=FlowAction.HIDE,
-            ),
-            ConditionalFlow(
-                source_field_id="co_z_nadplata",
-                operator=ConditionOperator.EQUALS,
-                value=_ZWROT,
-                target_type=TargetType.FIELD,
-                target_id="numer_rachunku",
-                action=FlowAction.SET_VALUE,
-                action_value="PL",
-            ),
-            ConditionalFlow(
-                source_field_id="podatek",
-                operator=ConditionOperator.EQUALS,
-                value="PIT",
-                target_type=TargetType.PAGE,
-                target_id="page_sprawa",
-                action=FlowAction.SHOW,
-            ),
+            _show("co_z_nadplata", _ZALICZYC, "nazwa_podatku"),
+            _show("co_z_nadplata", _ZWROT, "numer_rachunku"),
         ],
     )
     return DomainLogicEnricher(get_settings().DICTIONARIES_DIR).enrich(raw)

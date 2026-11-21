@@ -59,6 +59,10 @@ INITIAL_DATA_ATTRIBUTES: dict[str, tuple[str, ...]] = {
 }
 
 
+# Dane z MLPZ, które Standardy pozwalają użytkownikowi poprawić (sekcja „Dane do kontaktu”).
+EDITABLE_MLPZ_ATTRIBUTES = frozenset({"phoneNumber", "email"})
+
+
 def find_official_dictionary(name: str | None) -> str | None:
     """Oficjalna nazwa słownika COI (dictionaryName) dla nazwy, aliasu lub id bazy (dict_*)."""
     hit = fd_find_dictionary(name)
@@ -490,13 +494,16 @@ def validate_form_definition(
                 f"Pole „{name}”: defaultValueType może mieć tylko wartość EXTERNAL_SYSTEM lub być puste.",
             )
         if default_type == EXTERNAL_SYSTEM:
-            if field.get("readOnly") is not True:
-                err(
+            source, _, attribute = str(default_value or "").partition(".")
+            # Standardy („Dane do kontaktu”): telefon i e-mail z MLPZ są edytowalne
+            # („Możesz je zmienić lub usunąć”); pozostałe dane z rejestrów - tylko do odczytu.
+            editable = source == "MLPZ" and attribute in EDITABLE_MLPZ_ATTRIBUTES
+            if field.get("readOnly") is not True and not editable:
+                warn(
                     f"{fpath}.readOnly",
                     "Dane inicjalne",
-                    f"Pole „{name}” zasilane z rejestru musi mieć readOnly: true.",
+                    f"Pole „{name}” zasilane z rejestru powinno mieć readOnly: true.",
                 )
-            source, _, attribute = str(default_value or "").partition(".")
             if source not in INITIAL_DATA_ATTRIBUTES:
                 err(
                     f"{fpath}.defaultValue",

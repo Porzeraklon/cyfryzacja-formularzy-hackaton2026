@@ -18,6 +18,7 @@ from typing import Any
 from backend.app.schemas.form_schema import (
     ConditionalFlow,
     ConditionOperator,
+    ConsentItem,
     CustomValidator,
     DictionariesBlock,
     FieldDefinition,
@@ -26,6 +27,7 @@ from backend.app.schemas.form_schema import (
     MappedDictionary,
     PageDefinition,
     ProposedDictionary,
+    SectionDefinition,
     TargetType,
     ValidationRules,
 )
@@ -106,6 +108,24 @@ def _find_official(ref: str) -> dict[str, Any] | None:
     return None
 
 
+# Oświadczenia/zgody rozpoznawane po treści (checkbox bez opcji), jak w eksporterze FormDefinition.
+_CONSENT_LABEL = re.compile(
+    r"o[śs]wiadczam|wyra[żz]am zgod|zapozna[łl]|zapoznaj|akceptuj|zgod[ay] na", re.IGNORECASE
+)
+
+
+def _is_consent_field(field: FieldDefinition) -> bool:
+    if field.field_type == FieldType.CONSENT_SECTION:
+        return True
+    return (
+        field.field_type == FieldType.CHECKBOX
+        and not field.options
+        and not field.dictionary_ref
+        and not field.dependencies
+        and bool(_CONSENT_LABEL.search(field.label or ""))
+    )
+
+
 def _iter_fields(fields: list[FieldDefinition]) -> Any:
     for field in fields:
         yield field
@@ -149,6 +169,9 @@ class DomainLogicEnricher:
                 suffix += 1
             seen_page_titles.add(title_key)
             middle.append(page)
+
+        removed_ids = self._move_consents_to_end(middle, contact)
+        middle = [page for page in middle if page.sections]
 
         pages = [
             PageDefinition(
@@ -199,6 +222,9 @@ class DomainLogicEnricher:
                         )
                     )
 
+        if removed_ids:
+            self._drop_flows_to(result, pages, removed_ids)
+
         for page_order, page in enumerate(pages, start=1):
             page.order = page_order
             for section_order, section in enumerate(page.sections, start=1):
@@ -207,6 +233,60 @@ class DomainLogicEnricher:
         result.pages = pages
         result.dictionaries = DictionariesBlock(mapped_dictionaries=mapped, proposed_dictionaries=proposed)
         return result
+
+    @staticmethod
+    def _move_consents_to_end(middle: list[PageDefinition], contact: list[SectionDefinition]) -> set[str]:
+        """Oświadczenia i zgody z treści dokumentu -> jedna sekcja zgód na przedostatniej stronie.
+
+        Standardy („Oświadczenie”): zgody i oświadczenia umieszczamy na końcu formularza, w polu
+        typu „Sekcja zgód”, nie jako checkbox/radio. Tytuł sekcji: „Oświadczenie” / „Zgoda”, gdy
+        jest jeden element, „Zgody i oświadczenia”, gdy więcej. Zwraca id usuniętych pól.
+        """
+        consent_section = next(
+            (s for s in contact if any(f.field_type == FieldType.CONSENT_SECTION for f in s.fields)), None
+        )
+        if consent_section is None:
+            return set()
+        target = next(f for f in consent_section.fields if f.field_type == FieldType.CONSENT_SECTION)
+        consents = list(target.consents or [])
+        removed: set[str] = set()
+        for page in middle:
+            kept_sections = []
+            for section in page.sections:
+                moved = [f for f in section.fields if _is_consent_field(f)]
+                if not moved:
+                    kept_sections.append(section)
+                    continue
+                for field in moved:
+                    removed.add(field.field_id)
+                    items = field.consents or [ConsentItem(description=field.label, required=field.required)]
+                    for item in items:
+                        if _normalize(item.description) not in {_normalize(c.description) for c in consents}:
+                            consents.append(item)
+                section.fields = [f for f in section.fields if f.field_id not in removed]
+                if section.fields:
+                    kept_sections.append(section)
+            page.sections = kept_sections
+        if len(consents) > len(target.consents or []):
+            target.consents = consents
+            target.required = any(c.required for c in consents)
+            consent_section.title = target.label = "Zgody i oświadczenia"
+        return removed
+
+    @staticmethod
+    def _drop_flows_to(result: FormDocumentSchema, pages: list[PageDefinition], removed: set[str]) -> None:
+        """Usuwa zależności odwołujące się do pól przeniesionych do sekcji zgód."""
+
+        def keep(flow: ConditionalFlow) -> bool:
+            return flow.source_field_id not in removed and flow.target_id not in removed
+
+        result.conditional_flows = [f for f in result.conditional_flows if keep(f)]
+        for page in pages:
+            page.visibility_rules = [f for f in page.visibility_rules if keep(f)]
+            for section in page.sections:
+                section.visibility_rules = [f for f in section.visibility_rules if keep(f)]
+                for field in _iter_fields(section.fields):
+                    field.dependencies = [f for f in field.dependencies if keep(f)]
 
     def _enrich_llm_field(
         self,

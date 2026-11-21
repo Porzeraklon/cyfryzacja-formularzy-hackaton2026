@@ -105,7 +105,7 @@ class TestExportFromMock:
     def test_repeting_spelling_in_output(self, client):
         _, fd = self._export(client)
         groups = [f for f in _iter_fields(fd) if f.get("repetingSectionGrid")]
-        assert groups, "mock musi zawierać sekcję powtarzalną (okresy nadpłaty)"
+        assert groups, "sekcje muszą mieć repetingSectionGrid (pisownia schematu)"
         assert all("repeatingSectionGrid" not in f for f in _iter_fields(fd))
 
     def test_consent_and_textblock_types(self, client):

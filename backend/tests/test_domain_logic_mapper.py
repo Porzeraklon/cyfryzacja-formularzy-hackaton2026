@@ -94,3 +94,76 @@ class TestEnrich:
         result = enricher.enrich(raw)
         middle = [p.title for p in result.pages if p.title not in {APPLICANT_PAGE_TITLE, CONTACT_PAGE_TITLE}]
         assert middle == ["Załączniki", "Załączniki (2)"]
+
+
+def _section(form: FormDocumentSchema, section_id: str) -> SectionDefinition:
+    return next(s for p in form.pages for s in p.sections if s.section_id == section_id)
+
+
+class TestStandardsLastPage:
+    """Przedostatnia strona wg Standardów („Dane do kontaktu”, „Oświadczenie”) i wizualizacji COI."""
+
+    def test_contact_section_matches_standards(self, settings):
+        result = DomainLogicEnricher(settings.DICTIONARIES_DIR).enrich(_raw_form(_thematic_page("Sprawa")))
+        contact = _section(result, "dane_do_kontaktu")
+        assert "Możesz je zmienić lub usunąć." in contact.description
+        assert [(f.label, f.required, f.initial_value, f.read_only) for f in contact.fields] == [
+            ("Numer telefonu", False, "MLPZ.phoneNumber", False),
+            ("Adres e-mail", False, "MLPZ.email", False),
+        ]
+        assert contact.fields[1].validation_rules.custom_validator.value == "EMAIL"
+        consent = _section(result, "zgody")
+        assert consent.title == "Zgoda"
+        assert [c.description for c in consent.fields[0].consents] == [
+            "Wyrażam zgodę na przetwarzanie moich danych osobowych zgodnie z klauzulą informacyjną"
+        ]
+
+    def test_document_statements_move_to_consent_section(self, settings):
+        page = _thematic_page("Sprawa")
+        page.sections.append(
+            SectionDefinition(
+                section_id="sec_osw",
+                title="Oświadczenia",
+                order=2,
+                fields=[
+                    FieldDefinition(
+                        field_id="osw_1",
+                        name="osw_1",
+                        label="Oświadczam, że dane podane we wniosku są zgodne z prawdą.",
+                        field_type=FieldType.CHECKBOX,
+                        required=True,
+                    )
+                ],
+            )
+        )
+        result = DomainLogicEnricher(settings.DICTIONARIES_DIR).enrich(_raw_form(page))
+        assert "sec_osw" not in _section_ids(result)
+        consent = _section(result, "zgody")
+        assert consent.title == "Zgody i oświadczenia"
+        descriptions = [c.description for c in consent.fields[0].consents]
+        assert "Oświadczam, że dane podane we wniosku są zgodne z prawdą." in descriptions
+        assert len(descriptions) == 2
+        assert result.pages[-1].title == CONTACT_PAGE_TITLE
+
+
+def test_mock_page_two_matches_reference(client):
+    """Strona 2 mocka 1:1 z wizualizacją „Wniosek o stwierdzenie nadpłaty podatku”."""
+    import io
+
+    from backend.tests.conftest import PDF_BYTES
+
+    body = client.post(
+        "/api/v1/forms/convert", files={"file": ("w.pdf", io.BytesIO(PDF_BYTES), "application/pdf")}
+    ).json()
+    tab = body["form_definition"]["tabs"][1]
+    sections = [q["field"]["title"] for q in tab["questions"]]
+    assert sections == ["Informacje o nadpłacie", "Rozliczenie nadpłaty", "Korekta deklaracji"]
+    labels = [c["field"].get("title") for q in tab["questions"] for c in q["field"]["repetingSectionGrid"]]
+    assert "Wybierz, co mamy zrobić z nadpłatą" in labels and "Plik deklaracji podatkowej" in labels
+    shown = {
+        c["field"]["title"]
+        for q in tab["questions"]
+        for c in q["field"]["repetingSectionGrid"]
+        if c["field"].get("states")
+    }
+    assert shown == {"Nazwa podatku", "Numer rachunku"}

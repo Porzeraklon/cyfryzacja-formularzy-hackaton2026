@@ -9,7 +9,7 @@ Urząd, Podmiot wniosku, Twoje dane (MLPZ, tylko do odczytu), Adres
 zamieszkania, Dane podmiotu, Adres siedziby, Potwierdzenie reprezentanta,
 Dane innej osoby, Adres zamieszkania innej osoby, Pełnomocnictwo,
 Opłata skarbowa, Opłata skarbowa za pełnomocnictwo. Strona „Kontakt
-i zgody”: Dane do kontaktu, Zgody i oświadczenia (CONSENT_SECTION,
+i zgody”: Dane do kontaktu, Zgoda / Zgody i oświadczenia (CONSENT_SECTION,
 nie checkboxy).
 
 Zależności warunkowe są osadzone w sekcjach (visibility_rules) i polach
@@ -458,8 +458,19 @@ def applicant_sections(
     ]
 
 
+CONSENT_PERSONAL_DATA = (
+    "Wyrażam zgodę na przetwarzanie moich danych osobowych zgodnie z klauzulą informacyjną"
+)
+
+
 def contact_sections() -> list[SectionDefinition]:
-    """Sekcje strony „Kontakt i zgody” — przedostatnia strona wzorca COI."""
+    """Sekcje przedostatniej strony wg Standardów (rozdz. „Dane do kontaktu”, „Oświadczenie”)
+    i wizualizacji referencyjnej COI: dane kontaktowe z MLPZ (edytowalne) i sekcja „Zgoda”.
+
+    Bez numeru kierunkowego, ePUAP i e-Doręczeń - konfiguracja sekcji w Standardach przewiduje
+    wyłącznie „Numer telefonu” i „Adres e-mail” (oba niewymagane, zasilane danymi inicjalnymi).
+    Oświadczenia wyekstrahowane z dokumentu enricher dokleja do tej samej sekcji zgód.
+    """
     return [
         SectionDefinition(
             section_id="dane_do_kontaktu",
@@ -467,55 +478,36 @@ def contact_sections() -> list[SectionDefinition]:
             order=1,
             description=(
                 "Wpisanie danych do kontaktu może przyspieszyć załatwienie sprawy. Urzędnik będzie mógł "
-                "skontaktować się z Tobą w przypadku pytań lub wątpliwości."
+                "skontaktować się z Tobą w przypadku pytań lub wątpliwości.\n"
+                "Jeśli widzisz uzupełnione dane, sprawdź, czy są poprawne. Możesz je zmienić lub usunąć."
             ),
             fields=[
                 _field(
-                    "numer_kierunkowy",
-                    "Numer kierunkowy",
-                    FieldType.SELECT,
-                    dictionary_ref="dict_dial_codes",
-                    initial_value="+48 Polska",
-                ),
-                _field("telefon", "Numer telefonu"),
-                _field("email", "Adres e-mail", validator=CustomValidator.EMAIL),
-                _field(
-                    "adres_ade",
-                    "Adres do e-Doręczeń",
-                    validator=CustomValidator.ADE,
-                    placeholder="Format: AE:PL-12345-67890-ABCDE-12",
+                    "telefon",
+                    "Numer telefonu",
+                    initial_value="MLPZ.phoneNumber",
+                    default_value_type="EXTERNAL_SYSTEM",
                 ),
                 _field(
-                    "skrytka_epuap",
-                    "Adres skrytki ePUAP",
-                    validator=CustomValidator.EPUAP,
-                    placeholder="Format: /nazwa_podmiotu/SkrytkaESP",
+                    "email",
+                    "Adres e-mail",
+                    validator=CustomValidator.EMAIL,
+                    initial_value="MLPZ.email",
+                    default_value_type="EXTERNAL_SYSTEM",
                 ),
             ],
         ),
         SectionDefinition(
             section_id="zgody",
-            title="Zgody i oświadczenia",
+            title="Zgoda",
             order=2,
             fields=[
                 _field(
                     "zgody_oswiadczenia",
-                    "Zgody i oświadczenia",
+                    "Zgoda",
                     FieldType.CONSENT_SECTION,
                     required=True,
-                    consents=[
-                        ConsentItem(
-                            description="Oświadczam, że dane podane we wniosku są zgodne z prawdą.",
-                            required=True,
-                        ),
-                        ConsentItem(
-                            description=(
-                                "Zapoznaję się z klauzulą informacyjną o przetwarzaniu danych osobowych "
-                                "(dostępna w BIP urzędu)."
-                            ),
-                            required=True,
-                        ),
-                    ],
+                    consents=[ConsentItem(description=CONSENT_PERSONAL_DATA, required=True)],
                 ),
             ],
         ),
