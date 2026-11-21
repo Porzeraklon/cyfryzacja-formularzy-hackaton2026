@@ -16,3 +16,8 @@ models/*
 *.onnx
 node_modules/
 .DS_Store
+
+# Materiały konkursowe (referencje, nie kod projektu) — nigdy nie commitowane
+Materiały dla projketu/
+# Lokalny stan agenta (plany, sesje)
+.qwen/
