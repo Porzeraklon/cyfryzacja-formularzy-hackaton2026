@@ -34,13 +34,15 @@ MIME_JPEG = "image/jpeg"
 
 EXTENSION_TO_MIMES: dict[str, frozenset[str]] = {
     ".pdf": frozenset({MIME_PDF}),
-    ".doc": frozenset({MIME_DOC}),
-    ".docx": frozenset({MIME_DOCX}),
+    # COI: DOCX (ZIP) bywa opisany jako .DOC; oba parsery bezpieczne (bez makr) -> krzyżowe MIME.
+    ".doc": frozenset({MIME_DOC, MIME_DOCX}),
+    ".docx": frozenset({MIME_DOCX, MIME_DOC}),
     ".xlsx": frozenset({MIME_XLSX}),
     ".ods": frozenset({MIME_ODS}),
     ".png": frozenset({MIME_PNG}),
     ".jpg": frozenset({MIME_JPEG}),
     ".jpeg": frozenset({MIME_JPEG}),
+    ".jpe": frozenset({MIME_JPEG}),
 }
 
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"

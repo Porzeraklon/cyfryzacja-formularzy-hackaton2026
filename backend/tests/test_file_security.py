@@ -34,6 +34,7 @@ DOCX_BYTES = make_zip({"word/document.xml": b"<w:document/>", "[Content_Types].x
 XLSX_BYTES = make_zip({"xl/workbook.xml": b"<workbook/>", "[Content_Types].xml": b"<Types/>"})
 ODS_BYTES = make_zip({"mimetype": MIME_ODS.encode("ascii"), "content.xml": b"<office/>"})
 DOC_BYTES = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64
+JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 16
 
 
 class FakeUpload:
@@ -151,3 +152,30 @@ class TestSizeAndRam:
         content = asyncio.run(read_upload_limited(upload, 1024 * 1024))
         assert isinstance(content, bytes)
         assert content == PDF_BYTES
+
+
+class TestWordFamilyCrossMatchAndJpe:
+    """A+B: błędnie opisane pliki rodziny Word (.DOC/.DOCX) oraz rozszerzenie .jpe."""
+
+    def test_mislabeled_docx_named_doc_accepted(self):
+        validated = validate_file_content("wniosek.DOC", DOCX_BYTES, 1024 * 1024)
+        assert validated.mime_type == MIME_DOCX
+
+    def test_mislabeled_doc_named_docx_accepted(self):
+        validated = validate_file_content("wniosek.docx", DOC_BYTES, 1024 * 1024)
+        assert validated.mime_type == MIME_DOC
+
+    def test_jpe_extension_accepted(self):
+        assert validate_filename("skan.jpe") == "skan.jpe"
+        validated = validate_file_content("skan.jpe", JPEG_BYTES, 1024 * 1024)
+        assert validated.mime_type == "image/jpeg"
+
+    def test_pdf_named_doc_still_rejected(self):
+        with pytest.raises(FileValidationError) as exc:
+            validate_file_content("wniosek.doc", PDF_BYTES, 1024 * 1024)
+        assert exc.value.code == "MIME_MISMATCH"
+
+    def test_png_named_jpe_still_rejected(self):
+        with pytest.raises(FileValidationError) as exc:
+            validate_file_content("skan.jpe", PNG_BYTES, 1024 * 1024)
+        assert exc.value.code == "MIME_MISMATCH"

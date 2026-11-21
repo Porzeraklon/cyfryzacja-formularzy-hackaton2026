@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
-    {".pdf", ".doc", ".docx", ".ods", ".xlsx", ".jpg", ".jpeg", ".png"}
+    {".pdf", ".doc", ".docx", ".ods", ".xlsx", ".jpg", ".jpeg", ".jpe", ".png"}
 )
 
 
