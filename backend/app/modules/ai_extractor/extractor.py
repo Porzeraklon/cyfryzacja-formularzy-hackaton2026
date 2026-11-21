@@ -1,28 +1,25 @@
 """[OWNERSHIP: Branch 1 - feat/backend-ai-pipeline]
 
-Lokalny LLM (llama-cpp-python, wagi GGUF w MODELS_DIR) rozpoznający układ
-dokumentu: strony TEMATYCZNE (nie fizyczne strony PDF), sekcje, etykiety,
-typy kontrolek i kolumny tabel powtarzalnych -> FormDocumentSchema.
+Model LLM (backend z llm_backend.py: lokalny GGUF albo endpoint OpenAI-compatible)
+rozpoznający układ dokumentu: strony TEMATYCZNE (nie fizyczne strony PDF), sekcje,
+etykiety, typy kontrolek i kolumny tabel powtarzalnych -> FormDocumentSchema.
 OCR stron obrazowych odbywa się w ingestion (ParsedDocument niesie wyłącznie tekst).
-Gramatyka GBNF z response_format wymusza JSON zgodny ze schematem wewnętrznym.
-100% offline, niski koszt CPU/RAM. Zero wywołań zewnętrznych API.
+JSON wymuszany przez response_format backendu i walidowany modelami _Llm*.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
-import threading
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.core.exceptions import PipelineNotReadyError
 from backend.app.interfaces.pipeline import ParsedDocument
+from backend.app.modules.ai_extractor.llm_backend import LlmBackend
 from backend.app.schemas.form_schema import (
     DictionaryItem,
     FieldDefinition,
@@ -34,8 +31,6 @@ from backend.app.schemas.form_schema import (
 )
 
 MAX_PAGE_CHARS = 9000
-MAX_OUTPUT_TOKENS = 3072
-N_CTX = 8192
 
 _PL_TRANSLIT = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
 
@@ -117,11 +112,6 @@ class _LlmDocument(BaseModel):
     pages: list[_LlmPage] = Field(min_length=1, max_length=4)
 
 
-# llama.cpp nie jest thread-safe: jedna instancja na plik GGUF, inference serializowane.
-_LLM_CACHE: dict[str, Any] = {}
-_LLM_LOCK = threading.Lock()
-
-
 def _slugify(value: str) -> str:
     ascii_value = unicodedata.normalize("NFKD", value.translate(_PL_TRANSLIT))
     ascii_value = ascii_value.encode("ascii", "ignore").decode("ascii")
@@ -129,59 +119,30 @@ def _slugify(value: str) -> str:
     return slug[:60] or "pole"
 
 
-def _find_gguf(models_dir: Path) -> Path | None:
-    if not models_dir.is_dir():
-        return None
-    files = sorted(models_dir.glob("*.gguf"))
-    if not files:
-        return None
-    preferred = [f for f in files if "qwen3-4b" in f.name.lower()]
-    return (preferred or files)[0]
+def _strip_code_fence(raw: str) -> str:
+    text = raw.strip()
+    if not text.startswith("```"):
+        return text
+    text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+    return re.sub(r"\s*```$", "", text).strip()
 
 
-def _load_llm(model_path: Path) -> Any:
-    key = str(model_path.resolve())
-    with _LLM_LOCK:
-        if key in _LLM_CACHE:
-            return _LLM_CACHE[key]
-        try:
-            from llama_cpp import Llama
-        except ImportError as exc:
-            raise PipelineNotReadyError(
-                "Brak biblioteki llama-cpp-python. Zainstaluj extras: pip install -e '.[llm]'.",
-                {"reason": str(exc)},
-            ) from exc
-        try:
-            llm = Llama(
-                model_path=key,
-                n_ctx=N_CTX,
-                n_threads=os.cpu_count() or 4,
-                n_gpu_layers=0,
-                verbose=False,
-            )
-        except Exception as exc:
-            raise PipelineNotReadyError(
-                f"Nie udało się wczytać modelu GGUF: {model_path.name}.",
-                {"reason": str(exc)},
-            ) from exc
-        _LLM_CACHE[key] = llm
-        return llm
+class LlmStructureExtractor:
+    """Implementacja protokołu StructureExtractor na wybranym backendzie LLM."""
 
-
-class LocalStructureExtractor:
-    """Implementacja protokołu StructureExtractor."""
-
-    def __init__(self, models_dir: Path) -> None:
-        self._models_dir = Path(models_dir)
+    def __init__(self, backend: LlmBackend) -> None:
+        self._backend = backend
 
     def extract(self, parsed: ParsedDocument) -> FormDocumentSchema:
         stem = Path(parsed.source_filename).stem
         fallback_title = stem.replace("_", " ").replace("-", " ").strip() or "Formularz"
-        if _find_gguf(self._models_dir) is None:
+        # Dokument bez tekstu nie woła LLM, ale i tak musi mieć gotowy backend —
+        # inaczej 503 zamieniłoby się na cichy, pusty formularz.
+        if not self._backend.ready():
             raise PipelineNotReadyError(
-                "Brak modelu LLM (plik *.gguf) w MODELS_DIR. Pobierz wagi ręcznie, np. "
-                "Qwen3-4B-Instruct-2507-Q4_K_M.gguf z unsloth/Qwen3-4B-Instruct-2507-GGUF.",
-                {"models_dir": str(self._models_dir)},
+                f"Backend LLM '{self._backend.model_name}' nie jest gotowy. Sprawdź LLM_BACKEND "
+                "oraz MODELS_DIR (tryb local) albo LLM_API_URL i LLM_MODEL (tryb api).",
+                {"backend": self._backend.model_name},
             )
 
         page_texts = [page.text.strip() for page in parsed.pages if page.text.strip()]
@@ -243,26 +204,19 @@ class LocalStructureExtractor:
         return chunks
 
     def _call_llm(self, text: str) -> _LlmDocument:
-        model_path = _find_gguf(self._models_dir)
-        assert model_path is not None  # sprawdzane w extract()
-        llm = _load_llm(model_path)
-        with _LLM_LOCK:
-            response = llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
-                ],
-                response_format={"type": "json_object", "schema": _LlmDocument.model_json_schema()},
-                temperature=0.0,
-                max_tokens=MAX_OUTPUT_TOKENS,
-            )
-        raw = response["choices"][0]["message"]["content"]
+        raw = self._backend.complete(
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            json_schema=_LlmDocument.model_json_schema(),
+        )
         try:
-            return _LlmDocument.model_validate(json.loads(raw))
+            return _LlmDocument.model_validate(json.loads(_strip_code_fence(raw)))
         except (json.JSONDecodeError, ValueError) as exc:
             raise PipelineNotReadyError(
-                "Lokalny LLM zwrócił niepoprawną strukturę JSON dla dokumentu.",
-                {"reason": str(exc), "model": model_path.name},
+                "Model LLM zwrócił niepoprawną strukturę JSON dla dokumentu.",
+                {"reason": str(exc), "model": self._backend.model_name},
             ) from exc
 
     @staticmethod
