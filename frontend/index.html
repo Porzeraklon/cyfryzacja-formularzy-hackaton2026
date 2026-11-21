@@ -74,15 +74,18 @@
     <!-- ===================== JSON & SŁOWNIKI ===================== -->
     <section id="tab-json" class="tab-panel">
       <div class="card">
-        <h2>Podgląd i edycja JSON formularza COI</h2>
+        <h2>Podgląd i edycja JSON formularza COI (FormDefinition)</h2>
+        <p class="muted small">Edytor zawiera formularz w oficjalnym formacie importu e-Usług (title, tabs, questions, field, flow.links).
+          Wynik backendu jest konwertowany automatycznie; walidacja sprawdza reguły techniczne 1–12, słowniki, dane inicjalne i dobre praktyki.</p>
         <div class="actions">
-          <button id="btn-validate-json" class="btn btn-secondary" type="button">Waliduj JSON (schemat + spójność)</button>
+          <button id="btn-validate-json" class="btn btn-secondary" type="button">Waliduj JSON (reguły COI)</button>
           <button id="btn-apply-json" class="btn btn-primary" type="button">Zastosuj i wizualizuj</button>
           <button id="btn-download-json" class="btn btn-secondary" type="button">Pobierz .json</button>
           <span class="actions-sep" aria-hidden="true"></span>
           <button id="btn-format-json" class="btn btn-secondary" type="button" title="Sformatuj (wcięcia 2 spacje)">Formatuj</button>
           <button id="btn-minify-json" class="btn btn-secondary" type="button" title="Zapisz w jednej linii">Minifikuj</button>
           <label class="btn btn-secondary" for="json-file-input">Wczytaj .json</label>
+          <button id="btn-load-example" class="btn btn-secondary" type="button" title="Wzór z materiałów konkursu">Przykład: wniosek o nadpłatę</button>
           <input type="file" id="json-file-input" accept=".json,application/json" hidden>
         </div>
         <div id="json-validation-output" class="validation-output"></div>
@@ -98,9 +101,10 @@
       </div>
       <div class="card">
         <h2>Inspektor słowników COI</h2>
+        <p class="muted small">Słowniki predefiniowane: Województwo, Powiat, Gmina, Miejscowość, Kraje (tylko lista rozwijana) oraz Numery kierunkowe.</p>
         <div class="dict-columns">
           <div>
-            <h3>Zmapowane słowniki</h3>
+            <h3>Słowniki użyte w formularzu</h3>
             <div id="mapped-dicts" class="dict-list muted">Brak danych.</div>
           </div>
           <div>
@@ -118,18 +122,19 @@
           <h2 id="viz-title">Wizualizacja e-Usługi</h2>
           <button id="btn-viz-reset" class="btn btn-secondary" type="button">Resetuj wartości</button>
         </div>
-        <p class="muted">Interaktywny formularz renderowany na żywo z JSON-a: słowniki, przepływy warunkowe i walidacja (PESEL, telefon, kod pocztowy…).</p>
-        <nav id="viz-pages" class="viz-pages"></nav>
-        <form id="viz-form" novalidate></form>
-        <div class="actions viz-actions">
-          <button id="btn-viz-prev" class="btn btn-secondary" type="button">Wstecz</button>
-          <button id="btn-viz-next" class="btn btn-primary" type="button">Dalej</button>
-          <button id="btn-viz-summary" class="btn btn-primary hidden" type="button">Podsumowanie wniosku</button>
-        </div>
-        <div id="viz-messages" class="validation-output"></div>
-        <pre id="viz-summary" class="summary hidden"></pre>
-        <div class="actions">
-          <button id="btn-viz-download" class="btn btn-secondary hidden" type="button">Pobierz wniosek .json</button>
+        <p class="muted">Formularz e-Usługi renderowany z FormDefinition: strony i przepływ (flow.links), sekcje powtarzające się,
+          słowniki, dane z rejestrów (tylko do odczytu), stany dynamiczne jsonata (SHOW, READ_ONLY) i walidatory COI.</p>
+        <nav id="viz-pages" class="viz-pages" aria-label="Strony formularza"></nav>
+        <div id="viz-query-errors" class="validation-output"></div>
+        <form id="viz-form" class="viz-form" novalidate></form>
+        <div id="viz-messages" class="validation-output" aria-live="polite"></div>
+        <div class="viz-actions">
+          <button id="btn-viz-abort" class="btn btn-link" type="button">Przerwij wypełnianie</button>
+          <div class="viz-actions-right">
+            <button id="btn-viz-prev" class="btn btn-secondary" type="button">Wstecz</button>
+            <button id="btn-viz-next" class="btn btn-primary" type="button">Dalej</button>
+            <button id="btn-viz-download" class="btn btn-primary hidden" type="button">Pobierz dane wniosku .json</button>
+          </div>
         </div>
       </div>
     </section>
@@ -137,8 +142,11 @@
 
   <div id="toast" class="toast hidden"></div>
   <footer class="footer muted small">
-    COI Form Digitizer v0.1.0 — szkielet `core` (mock pipeline). Branch 1: AI/OCR, Branch 2: GUI.
+    COI Form Digitizer v0.1.0 — Branch 1: AI/OCR, Branch 2: GUI. Jsonata (MIT) dołączona lokalnie w vendor/.
   </footer>
+  <script src="vendor/jsonata.min.js"></script>
+  <script src="formdef.js"></script>
+  <script src="visualizer.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

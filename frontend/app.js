@@ -1,5 +1,7 @@
 /* COI Form Digitizer — frontend SPA (Branch 2: feat/frontend-and-visualizer).
- * Vanilla JS, zero zależności, podpięty pod /api/v1/* (działa z mock pipeline).
+ * Vanilla JS bez bundlera, podpięty pod /api/v1/* (działa z mock pipeline).
+ * Formularz w edytorze i wizualizatorze to oficjalny FormDefinition (formdef.js, visualizer.js);
+ * JSON backendu w formacie wewnętrznym jest konwertowany przy otwarciu.
  * [OWNERSHIP: Branch 2] — cały katalog frontend/ należy do Brancha 2.
  */
 "use strict";
@@ -13,21 +15,10 @@ const state = {
   token: sessionStorage.getItem("jwt_token") || "",
   selectedFiles: [],
   results: [],
-  currentForm: null,
+  currentForm: null,      // FormDefinition (format oficjalny COI)
+  sourceForm: null,       // oryginalny JSON backendu (format wewnętrzny), jeśli był konwertowany
+  conversionNotes: [],
   dictCache: new Map(),
-};
-
-const viz = {
-  form: null,
-  values: {},
-  pageIdx: 0,
-  flows: [],
-  fieldIndex: new Map(),
-  sectionIndex: new Map(),
-  pageIndex: new Map(),
-  refs: new Map(),
-  appliedSetValue: new Set(),
-  timers: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -76,113 +67,6 @@ async function api(path, options = {}) {
     throw error;
   }
   return payload;
-}
-
-/* ---------------- Walidatory lokalne (lustro backendu, natychmiastowy feedback) ---------------- */
-
-function peselErrors(value) {
-  if (!/^\d{11}$/.test(value)) return ["PESEL musi składać się z 11 cyfr."];
-  const weights = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3];
-  const sum = weights.reduce((acc, w, i) => acc + Number(value[i]) * w, 0);
-  const errors = [];
-  if ((10 - (sum % 10)) % 10 !== Number(value[10])) errors.push("Nieprawidłowa suma kontrolna PESEL.");
-  // Miesiąc koduje stulecie: 01–12 → 1900, 21–32 → 2000, 41–52 → 2100, 61–72 → 2200, 81–92 → 1800.
-  const encodedMonth = Number(value.slice(2, 4));
-  const century = [1900, 2000, 2100, 2200, 1800][Math.floor(encodedMonth / 20)];
-  const month = encodedMonth % 20;
-  if (century === undefined || month < 1 || month > 12) errors.push("Nieprawidłowy miesiąc w numerze PESEL.");
-  else {
-    const year = century + Number(value.slice(0, 2));
-    const day = Number(value.slice(4, 6));
-    const date = new Date(Date.UTC(year, month - 1, day));
-    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
-      errors.push("Nieprawidłowa data urodzenia w numerze PESEL.");
-    }
-  }
-  return errors;
-}
-
-function nipErrors(value) {
-  const digits = value.replace(/[\s-]/g, "");
-  if (!/^\d{10}$/.test(digits)) return ["NIP musi składać się z 10 cyfr."];
-  const weights = [6, 5, 7, 2, 3, 4, 5, 6, 7];
-  const sum = weights.reduce((acc, w, i) => acc + Number(digits[i]) * w, 0) % 11;
-  return sum === 10 || sum !== Number(digits[9]) ? ["Nieprawidłowa suma kontrolna NIP."] : [];
-}
-
-function regonErrors(value) {
-  const digits = value.replace(/[\s-]/g, "");
-  let weights;
-  if (/^\d{9}$/.test(digits)) weights = [8, 9, 2, 3, 4, 5, 6, 7];
-  else if (/^\d{14}$/.test(digits)) weights = [2, 4, 8, 5, 0, 9, 7, 3, 6, 1, 2, 4, 8];
-  else return ["REGON musi składać się z 9 lub 14 cyfr."];
-  const sum = weights.reduce((acc, w, i) => acc + Number(digits[i]) * w, 0) % 11;
-  return sum === 10 || sum !== Number(digits[digits.length - 1]) ? ["Nieprawidłowa suma kontrolna REGON."] : [];
-}
-
-const LOCAL_VALIDATORS = {
-  PESEL: peselErrors,
-  NIP: nipErrors,
-  REGON: regonErrors,
-  PL_PHONE: (v) => (/^(?:\+48)?\d{9}$/.test(v.replace(/[\s\-()]/g, "")) ? [] : ["Numer telefonu musi mieć 9 cyfr (opcjonalnie +48)."]),
-  POSTAL_CODE: (v) => (/^\d{2}-\d{3}$/.test(v.trim()) ? [] : ["Kod pocztowy musi mieć format NN-NNN."]),
-};
-
-function isNumeric(text) {
-  const normalized = text.replace(",", ".");
-  return normalized.trim() !== "" && Number.isFinite(Number(normalized));
-}
-
-function isValidIsoDate(text) {
-  const [y, m, d] = text.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
-}
-
-function localFieldErrors(value, rules, required) {
-  const text = value === null || value === undefined ? "" : String(value).trim();
-  if (text === "" || value === false) {
-    return required ? ["To pole jest wymagane."] : [];
-  }
-  if (!rules) return [];
-  const errors = [];
-  switch (rules.data_type) {
-    case "integer":
-      if (!/^-?\d+$/.test(text)) errors.push("Wartość musi być liczbą całkowitą.");
-      break;
-    case "number":
-      if (!isNumeric(text)) errors.push("Wartość musi być liczbą.");
-      break;
-    case "boolean":
-      if (!["true", "false", "1", "0", "tak", "nie"].includes(text.toLowerCase())) {
-        errors.push("Wartość musi być logiczna (true/false).");
-      }
-      break;
-    case "date":
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) errors.push("Data musi mieć format RRRR-MM-DD.");
-      else if (!isValidIsoDate(text)) errors.push("Nieprawidłowa data.");
-      break;
-    default: break;
-  }
-  if (rules.min_length != null && text.length < rules.min_length) errors.push(`Wartość jest za krótka (min. ${rules.min_length} znaków).`);
-  if (rules.max_length != null && text.length > rules.max_length) errors.push(`Wartość jest za długa (maks. ${rules.max_length} znaków).`);
-  if (rules.min_value != null || rules.max_value != null) {
-    if (!isNumeric(text)) errors.push("Wartość musi być liczbą, aby sprawdzić zakres.");
-    else {
-      const numeric = Number(text.replace(",", "."));
-      if (rules.min_value != null && numeric < rules.min_value) errors.push(`Wartość jest mniejsza niż minimum (${rules.min_value}).`);
-      if (rules.max_value != null && numeric > rules.max_value) errors.push(`Wartość jest większa niż maksimum (${rules.max_value}).`);
-    }
-  }
-  if (rules.pattern) {
-    try { if (!new RegExp(`^(?:${rules.pattern})$`).test(text)) errors.push("Wartość nie pasuje do wymaganego wzorca."); }
-    catch { /* nieprawidłowy regex po stronie serwera */ }
-  }
-  if (rules.custom_validator && LOCAL_VALIDATORS[rules.custom_validator]) {
-    errors.push(...LOCAL_VALIDATORS[rules.custom_validator](text));
-  }
-  if (errors.length && rules.error_message) return [rules.error_message];
-  return errors;
 }
 
 /* ---------------- Zakładki ---------------- */
@@ -477,7 +361,7 @@ function jsonFilename(sourceName) {
   return `${base || "coi-form"}.json`;
 }
 
-function downloadAllResults() {
+async function downloadAllResults() {
   const successes = state.results.filter((r) => r.status === "success");
   if (!successes.length) return;
   const bundle = {
@@ -487,9 +371,9 @@ function downloadAllResults() {
       succeeded: successes.length,
       failed: state.results.filter((r) => r.status === "error").length,
     },
-    results: state.results.map((r) => (r.status === "success"
-      ? { filename: r.filename, status: r.status, form: r.form, warnings: r.warnings || [] }
-      : { filename: r.filename, status: r.status, error: r.error })),
+    results: await Promise.all(state.results.map(async (r) => (r.status === "success"
+      ? { filename: r.filename, status: r.status, form: (await toFormDefinition(r.form)).form, warnings: r.warnings || [] }
+      : { filename: r.filename, status: r.status, error: r.error }))),
   };
   downloadBlob(JSON.stringify(bundle, null, 2), "coi-batch-wyniki.json");
 }
@@ -534,7 +418,8 @@ function renderResults() {
         ? [
           el("button", { class: "btn btn-secondary small", type: "button", onclick: () => openForm(result.form) }, "Otwórz JSON i wizualizację"),
           el("button", { class: "btn btn-secondary small", type: "button",
-            onclick: () => downloadBlob(JSON.stringify(result.form, null, 2), jsonFilename(result.filename)) }, "Pobierz JSON"),
+            onclick: async () => downloadBlob(JSON.stringify((await toFormDefinition(result.form)).form, null, 2),
+              jsonFilename(result.filename)) }, "Pobierz JSON (FormDefinition)"),
         ]
         : null,
       details.childNodes.length ? details : null,
@@ -544,13 +429,54 @@ function renderResults() {
 
 /* ---------------- JSON + inspektor słowników ---------------- */
 
-function openForm(form, { switchTo = "json" } = {}) {
-  state.currentForm = form;
-  setEditorText(JSON.stringify(form, null, 2));
-  $("json-validation-output").replaceChildren();
-  renderDictionaryInspector(form);
-  initVisualizer(form);
+/* Dowolny JSON formularza → FormDefinition (konwersja formatu wewnętrznego backendu). */
+async function toFormDefinition(form) {
+  if (fdIsFormDefinition(form)) return { form, source: null, notes: [] };
+  if (!fdIsInternalForm(form)) throw new Error("JSON nie zawiera ani „tabs” (FormDefinition), ani „pages” (format backendu).");
+  const refs = new Set();
+  const walk = (fields) => { for (const f of fields || []) { if (f.dictionary_ref) refs.add(f.dictionary_ref); walk(f.fields); } };
+  for (const page of form.pages) for (const section of page.sections || []) walk(section.fields);
+  const knownDictionaries = await Promise.all([...refs].map(async (id) => ({ dictionary_id: id, items: await getDictionaryItems(id) })));
+  const { form: converted, notes } = fdConvertInternal(form, { knownDictionaries });
+  return { form: converted, source: form, notes };
+}
+
+async function openForm(form, { switchTo = "json" } = {}) {
+  let result;
+  try { result = await toFormDefinition(form); } catch (error) { toast(error.message); return; }
+  state.currentForm = result.form;
+  state.sourceForm = result.source;
+  state.conversionNotes = result.notes;
+  setEditorText(JSON.stringify(result.form, null, 2));
+  renderDictionaryInspector();
+  renderStructureReport();
+  await initVisualizer(result.form);
   if (switchTo) switchTab(switchTo);
+}
+
+function renderStructureReport() {
+  const output = $("json-validation-output");
+  output.replaceChildren();
+  const issues = fdValidateStructure(state.currentForm, { compileQuery: vizCompileProblem });
+  const errors = issues.filter((i) => i.level === "error");
+  const warns = issues.filter((i) => i.level === "warn");
+  output.append(el("div", { class: errors.length ? "err" : "ok", text: errors.length
+    ? `FormDefinition: ${errors.length} błędów i ${warns.length} ostrzeżeń względem reguł konkursu. Kliknij błąd, aby przejść do miejsca w JSON.`
+    : `FormDefinition zgodny z regułami technicznymi COI (${warns.length} ostrzeżeń dobrych praktyk).` }));
+  for (const issue of [...errors, ...warns]) {
+    output.append(el("div", { class: `${issue.level === "error" ? "err" : "warn"} link`, title: "Przejdź do miejsca w edytorze",
+      text: `${issue.level === "error" ? "✗" : "⚠"} [${issue.rule}] ${issue.message}`, onclick: () => {
+        const offset = issue.path ? locateJsonPath(issue.path) : 0;
+        if (offset === null) toast("Nie udało się wskazać miejsca w edytorze.");
+        else focusEditorAt(offset, 1);
+      } }));
+  }
+  if (state.conversionNotes.length) {
+    const details = el("details", { class: "conversion-notes" },
+      el("summary", { text: `Konwersja z formatu backendu do FormDefinition: ${state.conversionNotes.length} uwag` }),
+      el("ul", {}, state.conversionNotes.map((n) => el("li", { text: n }))));
+    output.append(details);
+  }
 }
 
 /* ---------------- Edytor JSON (textarea + numery linii + diagnostyka składni) ---------------- */
@@ -696,6 +622,10 @@ function refreshEditor() {
 
 function countFields(form) {
   let count = 0;
+  if (fdIsFormDefinition(form)) {
+    fdWalk(form, ({ field }) => { if (field && !FD_SECTION_TYPES.includes(field.type)) count += 1; });
+    return count;
+  }
   const walk = (fields) => { for (const f of fields || []) { count += 1; walk(f.fields); } };
   for (const page of form?.pages || []) for (const section of page.sections || []) walk(section.fields);
   return count;
@@ -723,7 +653,7 @@ function locateJsonPath(path) {
     if (Array.isArray(node)) {
       const item = node[Number(part)];
       if (item && typeof item === "object") {
-        const idKey = Object.keys(item).find((k) => /_id$/.test(k) && typeof item[k] === "string");
+        const idKey = Object.keys(item).find((k) => /(^id$|_id$)/.test(k) && typeof item[k] === "string");
         if (idKey) anchors.push(`"${idKey}": ${JSON.stringify(item[idKey])}`);
       }
       node = item;
@@ -790,36 +720,33 @@ function loadJsonFile(file) {
 async function validateJson() {
   const output = $("json-validation-output");
   output.replaceChildren();
-  let parsed;
-  const result0 = parseEditor();
-  if (result0.empty) { output.append(el("div", { class: "err", text: "Edytor jest pusty." })); return; }
-  if (result0.error) {
-    output.append(el("div", { class: "err", text: `Nieprawidłowy JSON: ${result0.error.message}` }));
-    if (result0.location) focusEditorAt(result0.location.offset);
+  const parsed = parseEditor();
+  if (parsed.empty) { output.append(el("div", { class: "err", text: "Edytor jest pusty." })); return; }
+  if (parsed.error) {
+    output.append(el("div", { class: "err", text: `Nieprawidłowy JSON: ${parsed.error.message}` }));
+    if (parsed.location) focusEditorAt(parsed.location.offset);
     return;
   }
-  parsed = result0.value;
+  if (fdIsFormDefinition(parsed.value)) {
+    const previous = state.currentForm;
+    state.currentForm = parsed.value;
+    renderStructureReport();
+    state.currentForm = previous;
+    return;
+  }
+  /* Format wewnętrzny backendu — walidacja serwerowa (schemat Pydantic + spójność). */
   try {
-    const result = await api("/forms/validate-json", { method: "POST", json: { form: parsed } });
-    if (result.valid) output.append(el("div", { class: "ok", text: "JSON zgodny ze schematem COI i spójny." }));
-    const total = result.schema_errors.length + result.consistency_errors.length;
-    if (total) output.append(el("div", { class: "err", text: `Znaleziono błędów: ${total}. Kliknij błąd schematu, aby przejść do miejsca w JSON.` }));
-    for (const error of result.schema_errors) {
-      const path = error.split(":")[0];
-      output.append(el("div", { class: "err link", text: error, title: "Przejdź do miejsca w edytorze", onclick: () => {
-        const offset = locateJsonPath(path);
-        if (offset === null) toast("Nie udało się wskazać miejsca w edytorze.");
-        else focusEditorAt(offset, 1);
-      } }));
-    }
-    for (const error of result.consistency_errors) output.append(el("div", { class: "err", text: error }));
+    const result = await api("/forms/validate-json", { method: "POST", json: { form: parsed.value } });
+    output.append(el("div", { class: "warn", text: "To format wewnętrzny backendu, nie FormDefinition. „Zastosuj i wizualizuj” skonwertuje go do formatu COI." }));
+    if (result.valid) output.append(el("div", { class: "ok", text: "JSON zgodny ze schematem wewnętrznym i spójny." }));
+    for (const error of [...result.schema_errors, ...result.consistency_errors]) output.append(el("div", { class: "err", text: error }));
     for (const warning of result.warnings) output.append(el("div", { class: "warn", text: `⚠ ${warning}` }));
   } catch (error) {
     output.append(el("div", { class: "err", text: error.message }));
   }
 }
 
-function applyJson() {
+async function applyJson() {
   const result = parseEditor();
   if (result.empty) { toast("Edytor jest pusty."); return; }
   if (result.error) {
@@ -827,25 +754,43 @@ function applyJson() {
     if (result.location) focusEditorAt(result.location.offset);
     return;
   }
-  const parsed = result.value;
-  if (!Array.isArray(parsed?.pages)) { toast("JSON nie zawiera tablicy „pages” — to nie wygląda na formularz COI."); return; }
-  state.currentForm = parsed;
+  const wasInternal = !fdIsFormDefinition(result.value);
+  await openForm(result.value, { switchTo: null });
+  if (!state.currentForm) return;
   refreshEditor();
-  renderDictionaryInspector(parsed);
-  initVisualizer(parsed);
   switchTab("visualizer");
-  toast("Wizualizacja odświeżona z edytowanego JSON-a.", "info");
+  toast(wasInternal ? "Skonwertowano JSON backendu do FormDefinition i odświeżono wizualizację."
+    : "Wizualizacja odświeżona z edytowanego JSON-a.", "info");
 }
 
 function downloadJson() {
   const text = $("json-editor").value;
   if (!text.trim()) { toast("Edytor jest pusty."); return; }
-  const source = state.currentForm?.metadata?.source_filename;
-  downloadBlob(text, jsonFilename(source));
+  downloadBlob(text, jsonFilename(state.currentForm?.title || state.sourceForm?.metadata?.source_filename));
+}
+
+async function loadExample() {
+  try {
+    const response = await fetch("examples/wniosek-o-stwierdzenie-nadplaty-podatku.json");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await openForm(await response.json(), { switchTo: "visualizer" });
+    toast("Wczytano przykładowy formularz COI (wzór z materiałów konkursu).", "info");
+  } catch (error) { toast(`Nie udało się wczytać przykładu: ${error.message}`); }
+}
+
+/* Identyfikatory słowników dostępnych w lokalnej bazie COI (jedno zapytanie, bez 404 dla nieznanych). */
+function knownDictionaryIds() {
+  if (!state.dictIds) {
+    state.dictIds = api("/dictionaries")
+      .then((list) => new Set(list.dictionaries.map((d) => d.dictionary_id)))
+      .catch(() => { state.dictIds = null; return new Set(); });
+  }
+  return state.dictIds;
 }
 
 async function getDictionaryItems(dictionaryId) {
   if (state.dictCache.has(dictionaryId)) return state.dictCache.get(dictionaryId);
+  if (!(await knownDictionaryIds()).has(dictionaryId)) return [];
   try {
     const detail = await api(`/dictionaries/${encodeURIComponent(dictionaryId)}`);
     state.dictCache.set(dictionaryId, detail.items);
@@ -857,476 +802,46 @@ async function getDictionaryItems(dictionaryId) {
 }
 
 function dictItemsList(items) {
-  return el("ul", { class: "dict-items" },
-    items.map((item) => el("li", {}, el("code", { text: item.code }), ` — ${item.label}`)));
+  return el("ul", { class: "dict-items" }, items.slice(0, 50).map((item) => el("li", { text: item })),
+    items.length > 50 ? el("li", { class: "muted", text: `… i ${items.length - 50} kolejnych` }) : null);
 }
 
-function renderDictionaryInspector(form) {
+/* Słowniki użyte w FormDefinition (dictionaryName) + propozycje nowych słowników z backendu. */
+function renderDictionaryInspector() {
   const mappedBox = $("mapped-dicts");
   const proposedBox = $("proposed-dicts");
   mappedBox.replaceChildren();
   proposedBox.replaceChildren();
-  const mapped = form.dictionaries?.mapped_dictionaries || [];
-  const proposed = form.dictionaries?.proposed_dictionaries || [];
-  if (!mapped.length) mappedBox.append(el("p", { class: "muted", text: "Brak zmapowanych słowników." }));
-  if (!proposed.length) proposedBox.append(el("p", { class: "muted", text: "Brak propozycji nowych słowników." }));
-
-  for (const entry of mapped) {
+  const usage = new Map();
+  fdWalk(state.currentForm, ({ field }) => {
+    if (!field?.dictionaryName) return;
+    if (!usage.has(field.dictionaryName)) usage.set(field.dictionaryName, []);
+    usage.get(field.dictionaryName).push(field);
+  });
+  if (!usage.size) mappedBox.append(el("p", { class: "muted", text: "Formularz nie korzysta ze słowników." }));
+  for (const [name, fields] of usage) {
+    const dict = fdFindDictionary(name);
     const card = el("div", { class: "dict-card" },
-      el("h4", { text: entry.dictionary_name }),
-      el("div", { class: "dict-meta" },
-        el("code", { text: entry.dictionary_id }), ` → pole ${entry.field_id} `,
-        el("span", { class: "confidence", text: `${Math.round(entry.confidence * 100)}%` })),
+      el("h4", {}, name, " ", el("span", { class: `badge ${dict ? "badge-real" : "badge-new"}`, text: dict ? "COI" : "spoza katalogu" })),
+      el("div", { class: "dict-meta", text: `Pola: ${fields.map((f) => `${f.title || f.techName} (${f.type})`).join(", ")}` }),
+      dict ? el("div", { class: "muted small", text: `Dozwolony typ pola: ${dict.allowedTypes.join(", ")}` }) : null,
       el("div", { class: "muted small", text: "Wczytywanie pozycji…" }));
     mappedBox.append(card);
-    getDictionaryItems(entry.dictionary_id).then((items) => {
-      card.lastChild.replaceWith(items.length ? dictItemsList(items) : el("p", { class: "muted small", text: "Brak pozycji w bazie." }));
+    vizOptions(fields[0]).then((items) => {
+      card.lastChild.replaceWith(items.length ? dictItemsList(items)
+        : el("p", { class: "muted small", text: "Brak pozycji offline — słownik dostarcza platforma e-Usług (TERYT)." }));
     });
   }
+  const proposed = state.sourceForm?.dictionaries?.proposed_dictionaries || [];
+  if (!proposed.length) proposedBox.append(el("p", { class: "muted", text: "Brak propozycji nowych słowników." }));
   for (const entry of proposed) {
     proposedBox.append(el("div", { class: "dict-card" },
       el("h4", {}, entry.name, " ", el("span", { class: "badge badge-new", text: "NOWY" })),
       el("div", { class: "dict-meta" }, el("code", { text: entry.proposed_id }), ` → pole ${entry.target_field_id}`),
       el("p", { class: "small", text: entry.reason }),
-      dictItemsList(entry.items || [])));
+      el("p", { class: "small muted", text: "Struktura: pozycje { id, name, techName } — w FormDefinition wstawione jako options pola." }),
+      dictItemsList((entry.items || []).map((i) => i.label))));
   }
-}
-
-/* ---------------- Wizualizator e-Usługi ---------------- */
-
-function collectFlows(form) {
-  const flows = [];
-  const seen = new Set();
-  const push = (flow) => {
-    const key = JSON.stringify(flow);
-    if (!seen.has(key)) { seen.add(key); flows.push(flow); }
-  };
-  (form.conditional_flows || []).forEach(push);
-  for (const page of form.pages || []) {
-    (page.visibility_rules || []).forEach(push);
-    for (const section of page.sections || []) {
-      (section.visibility_rules || []).forEach(push);
-      for (const field of section.fields || []) (field.dependencies || []).forEach(push);
-    }
-  }
-  return flows;
-}
-
-function indexForm(form) {
-  viz.fieldIndex.clear(); viz.sectionIndex.clear(); viz.pageIndex.clear();
-  const walkFields = (fields) => {
-    for (const field of fields) {
-      viz.fieldIndex.set(field.field_id, field);
-      if (field.fields) walkFields(field.fields);
-    }
-  };
-  for (const page of form.pages || []) {
-    viz.pageIndex.set(page.page_id, page);
-    for (const section of page.sections || []) {
-      viz.sectionIndex.set(section.section_id, section);
-      walkFields(section.fields || []);
-    }
-  }
-}
-
-function conditionMet(flow) {
-  const raw = viz.values[flow.source_field_id];
-  const value = raw === undefined || raw === null ? "" : raw;
-  switch (flow.operator) {
-    case "EQUALS": return String(value) === String(flow.value);
-    case "NOT_EQUALS": return String(value) !== String(flow.value);
-    case "IN": return Array.isArray(flow.value) && flow.value.map(String).includes(String(value));
-    case "IS_EMPTY": return value === "" || value === false;
-    case "GREATER_THAN": return Number(value) > Number(flow.value);
-    default: return false;
-  }
-}
-
-function computeState(targetType, targetId, baseRequired) {
-  let visible = true;
-  let required = baseRequired;
-  let showRules = 0;
-  let showMet = false;
-  for (const flow of viz.flows) {
-    if (flow.target_type !== targetType || flow.target_id !== targetId) continue;
-    const met = conditionMet(flow);
-    if (flow.action === "SHOW") { showRules += 1; if (met) showMet = true; }
-    else if (flow.action === "HIDE" && met) visible = false;
-    else if (flow.action === "REQUIRE" && met) required = true;
-    else if (flow.action === "OPTIONAL" && met) required = false;
-    else if (flow.action === "SET_VALUE" && targetType === "FIELD") {
-      const key = JSON.stringify(flow);
-      if (met && !viz.appliedSetValue.has(key)) {
-        viz.appliedSetValue.add(key);
-        viz.values[targetId] = flow.action_value;
-        setInputValue(viz.refs.get(targetId), flow.action_value);
-      } else if (!met) viz.appliedSetValue.delete(key);
-    }
-  }
-  if (showRules > 0 && !showMet) visible = false;
-  return { visible, required };
-}
-
-/* Odzwierciedla wartość ustawioną przez SET_VALUE w kontrolce dowolnego typu. */
-function setInputValue(ref, value) {
-  if (!ref?.input) return;
-  const input = ref.input;
-  if (input.type === "checkbox") input.checked = value === true || value === "true";
-  else if (input.classList?.contains("radio-group")) {
-    input.querySelectorAll("input[type=radio]").forEach((radio) => { radio.checked = radio.value === String(value ?? ""); });
-  } else if (input.type !== "file") input.value = value ?? "";
-}
-
-async function resolveFieldOptions(field) {
-  if (field.options?.length) return field.options;
-  if (!field.dictionary_ref) return [];
-  const proposed = (viz.form.dictionaries?.proposed_dictionaries || [])
-    .find((p) => p.proposed_id === field.dictionary_ref || p.target_field_id === field.field_id);
-  if (proposed) return proposed.items || [];
-  return getDictionaryItems(field.dictionary_ref);
-}
-
-async function initVisualizer(form) {
-  viz.form = form;
-  viz.values = {};
-  viz.pageIdx = 0;
-  viz.flows = collectFlows(form);
-  viz.appliedSetValue.clear();
-  viz.refs.clear();
-  indexForm(form);
-  for (const field of viz.fieldIndex.values()) {
-    if (field.field_type === "repeatable_group") viz.values[field.field_id] = [{}];
-    else if (field.field_type === "checkbox") viz.values[field.field_id] = field.initial_value === true;
-    else viz.values[field.field_id] = field.initial_value ?? "";
-  }
-  $("viz-title").textContent = form.metadata?.title || "Wizualizacja e-Usługi";
-  $("viz-summary").classList.add("hidden");
-  $("btn-viz-download").classList.add("hidden");
-  $("viz-messages").replaceChildren();
-  await renderCurrentPage();
-}
-
-function visiblePages() {
-  return (viz.form.pages || [])
-    .map((page) => ({ page, state: computeState("PAGE", page.page_id, false) }))
-    .filter((entry) => entry.state.visible)
-    .map((entry) => entry.page);
-}
-
-function renderPageNav() {
-  const nav = $("viz-pages");
-  nav.replaceChildren();
-  const pages = visiblePages();
-  pages.forEach((page, index) => {
-    nav.append(el("button", {
-      class: `viz-page-btn ${index === viz.pageIdx ? "active" : ""}`,
-      type: "button",
-      onclick: () => { viz.pageIdx = index; renderCurrentPage(); },
-    }, `${index + 1}. ${page.title}`));
-  });
-  $("btn-viz-prev").disabled = viz.pageIdx === 0;
-  const last = viz.pageIdx >= pages.length - 1;
-  $("btn-viz-next").classList.toggle("hidden", last);
-  $("btn-viz-summary").classList.toggle("hidden", !last);
-}
-
-let renderToken = 0;
-
-async function renderCurrentPage() {
-  if (!viz.form) return;
-  const token = ++renderToken;
-  const pages = visiblePages();
-  if (viz.pageIdx >= pages.length) viz.pageIdx = Math.max(0, pages.length - 1);
-  renderPageNav();
-  const formEl = $("viz-form");
-  const page = pages[viz.pageIdx];
-  if (!page) {
-    viz.refs.clear();
-    formEl.replaceChildren(el("p", { class: "muted", text: "Brak widocznych stron — zaimportuj plik lub zastosuj JSON." }));
-    return;
-  }
-  // Budujemy stronę poza DOM; słowniki ładują się asynchronicznie, więc starszy render
-  // (np. po szybkim kliknięciu "Dalej") nie może nadpisać nowszego.
-  const refs = new Map();
-  const fragment = document.createDocumentFragment();
-  if (page.description) fragment.append(el("p", { class: "muted", text: page.description }));
-  const sections = [...(page.sections || [])].sort((a, b) => a.order - b.order);
-  for (const section of sections) {
-    const sectionEl = el("section", { class: "viz-section" },
-      el("h3", { text: section.title }),
-      section.description ? el("p", { class: "section-desc", text: section.description }) : null);
-    const fields = [...(section.fields || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    for (const field of fields) {
-      const node = await renderField(field, refs);
-      if (token !== renderToken) return;
-      sectionEl.append(node);
-    }
-    fragment.append(sectionEl);
-    refs.set(`section:${section.section_id}`, { wrap: sectionEl });
-  }
-  if (token !== renderToken) return;
-  viz.refs = refs;
-  formEl.replaceChildren(fragment);
-  applyFlows();
-}
-
-async function renderField(field, refs = viz.refs) {
-  const wrap = el("div", { class: "viz-field", "data-field-id": field.field_id });
-  const label = el("label", { for: `input-${field.field_id}` }, field.label);
-  const errorEl = el("div", { class: "field-error hidden" });
-  const helpEl = field.help_text ? el("div", { class: "help", text: field.help_text }) : null;
-  let input = null;
-
-  const commit = (value) => {
-    viz.values[field.field_id] = value;
-    applyFlows();
-    scheduleValidation(field);
-  };
-
-  switch (field.field_type) {
-    case "textarea":
-      input = el("textarea", { id: `input-${field.field_id}`, placeholder: field.placeholder || "", oninput: (e) => commit(e.target.value) });
-      input.value = viz.values[field.field_id] ?? "";
-      break;
-    case "select": {
-      const options = await resolveFieldOptions(field);
-      input = el("select", { id: `input-${field.field_id}`, onchange: (e) => commit(e.target.value) },
-        el("option", { value: "" }, "— wybierz —"),
-        options.map((item) => el("option", { value: item.code }, item.label)));
-      input.value = viz.values[field.field_id] ?? "";
-      break;
-    }
-    case "radio": {
-      const options = await resolveFieldOptions(field);
-      input = el("div", { class: "radio-group" }, options.map((item) =>
-        el("label", {},
-          el("input", { type: "radio", name: `radio-${field.field_id}`, value: item.code,
-            onchange: (e) => { if (e.target.checked) commit(item.code); } }),
-          item.label)));
-      const current = viz.values[field.field_id];
-      input.querySelectorAll("input").forEach((radio) => { radio.checked = radio.value === current; });
-      break;
-    }
-    case "checkbox":
-      input = el("input", { type: "checkbox", id: `input-${field.field_id}`, onchange: (e) => commit(e.target.checked) });
-      input.checked = viz.values[field.field_id] === true;
-      wrap.append(el("label", { class: "checkbox-label", for: `input-${field.field_id}` }, input, field.label));
-      wrap.append(...[helpEl, errorEl].filter(Boolean));
-      refs.set(field.field_id, { wrap, input, errorEl, label: null, field });
-      return wrap;
-    case "file":
-      input = el("input", { type: "file", id: `input-${field.field_id}`, onchange: (e) => commit(e.target.files[0]?.name || "") });
-      break;
-    case "number":
-      input = el("input", { type: "number", id: `input-${field.field_id}`, placeholder: field.placeholder || "", oninput: (e) => commit(e.target.value) });
-      input.value = viz.values[field.field_id] ?? "";
-      break;
-    case "date":
-      input = el("input", { type: "date", id: `input-${field.field_id}`, oninput: (e) => commit(e.target.value) });
-      input.value = viz.values[field.field_id] ?? "";
-      break;
-    case "repeatable_group": {
-      const group = el("div", { class: "repeatable-group" });
-      const entries = viz.values[field.field_id] || [{}];
-      const subRefs = [];
-      const renderEntries = () => {
-        group.replaceChildren();
-        subRefs.length = 0;
-        entries.forEach((entry, index) => {
-          const entryEl = el("div", { class: "repeatable-entry" },
-            el("div", { class: "repeatable-entry-head", text: `Wpis ${index + 1}` }));
-          const entryRefs = [];
-          for (const sub of field.fields || []) {
-            const inputType = { number: "number", date: "date" }[sub.field_type] || "text";
-            const subError = el("div", { class: "field-error hidden" });
-            const subInput = el("input", { type: inputType, id: `input-${field.field_id}-${index}-${sub.field_id}`,
-              placeholder: sub.placeholder || "",
-              oninput: (e) => {
-                entry[sub.field_id] = e.target.value;
-                viz.values[field.field_id] = entries;
-                showErrorsOn(subInput, subError, localFieldErrors(e.target.value, sub.validation_rules, sub.required));
-              } });
-            subInput.value = entry[sub.field_id] ?? "";
-            const subLabel = el("label", { for: subInput.id }, sub.label, sub.required ? el("span", { class: "required-mark", text: " *" }) : null);
-            entryEl.append(el("div", { class: "viz-field" }, subLabel, subInput,
-              sub.help_text ? el("div", { class: "help", text: sub.help_text }) : null, subError));
-            entryRefs.push({ sub, input: subInput, errorEl: subError, entry });
-          }
-          subRefs.push(entryRefs);
-          entryEl.append(el("button", { class: "btn btn-secondary small", type: "button", onclick: () => {
-            entries.splice(index, 1);
-            if (!entries.length) entries.push({});
-            viz.values[field.field_id] = entries;
-            renderEntries();
-          } }, "Usuń wpis"));
-          group.append(entryEl);
-        });
-        group.append(el("button", { class: "btn btn-secondary small", type: "button", onclick: () => {
-          entries.push({});
-          viz.values[field.field_id] = entries;
-          renderEntries();
-        } }, "Dodaj wpis"));
-      };
-      renderEntries();
-      wrap.append(...[label, group, helpEl, errorEl].filter(Boolean));
-      refs.set(field.field_id, { wrap, input: null, errorEl, label, field, subRefs });
-      return wrap;
-    }
-    default:
-      input = el("input", { type: "text", id: `input-${field.field_id}`, placeholder: field.placeholder || "", oninput: (e) => commit(e.target.value) });
-      input.value = viz.values[field.field_id] ?? "";
-  }
-  wrap.append(...[label, input, helpEl, errorEl].filter(Boolean));
-  refs.set(field.field_id, { wrap, input, errorEl, label, field });
-  return wrap;
-}
-
-function applyFlows() {
-  for (const [sectionId, section] of viz.sectionIndex) {
-    const ref = viz.refs.get(`section:${sectionId}`);
-    if (!ref) continue;
-    const { visible } = computeState("SECTION", sectionId, false);
-    ref.wrap.classList.toggle("hidden", !visible);
-  }
-  for (const [fieldId, field] of viz.fieldIndex) {
-    const ref = viz.refs.get(fieldId);
-    if (!ref) continue;
-    const { visible, required } = computeState("FIELD", fieldId, field.required);
-    ref.wrap.classList.toggle("hidden", !visible);
-    if (ref.label) {
-      ref.label.querySelector(".required-mark")?.remove();
-      if (required) ref.label.append(el("span", { class: "required-mark", text: " *" }));
-    }
-    ref.required = required;
-    ref.visible = visible;
-  }
-  renderPageNav();
-}
-
-function showErrorsOn(input, errorEl, errors) {
-  errorEl.replaceChildren(...errors.map((error) => el("div", { text: error })));
-  errorEl.classList.toggle("hidden", errors.length === 0);
-  if (input?.classList) input.classList.toggle("invalid", errors.length > 0);
-}
-
-function showFieldErrors(fieldId, errors) {
-  const ref = viz.refs.get(fieldId);
-  if (!ref) return;
-  showErrorsOn(ref.input, ref.errorEl, errors);
-}
-
-function entryIsEmpty(entry) {
-  return Object.values(entry || {}).every((v) => v === undefined || v === null || String(v).trim() === "");
-}
-
-/* Walidacja grupy powtarzalnej: wymagalność całej grupy + reguły pól w każdym niepustym wpisie. */
-function repeatableGroupErrors(field, required) {
-  const entries = viz.values[field.field_id] || [];
-  const filled = entries.filter((entry) => !entryIsEmpty(entry));
-  const groupErrors = required && filled.length === 0 ? ["Dodaj co najmniej jeden wypełniony wpis."] : [];
-  const entryErrors = entries.map((entry) => {
-    if (entryIsEmpty(entry) && !(required && filled.length === 0 && entry === entries[0])) {
-      return (field.fields || []).map(() => []);
-    }
-    return (field.fields || []).map((sub) => localFieldErrors(entry[sub.field_id], sub.validation_rules, sub.required));
-  });
-  return { groupErrors, entryErrors, ok: groupErrors.length === 0 && entryErrors.every((e) => e.every((x) => !x.length)) };
-}
-
-function fieldErrorsFor(field, required, show) {
-  if (field.field_type === "repeatable_group") {
-    const result = repeatableGroupErrors(field, required);
-    if (show) {
-      const ref = viz.refs.get(field.field_id);
-      if (ref) {
-        showErrorsOn(null, ref.errorEl, result.groupErrors);
-        (ref.subRefs || []).forEach((entryRefs, i) => entryRefs.forEach((subRef, j) => {
-          showErrorsOn(subRef.input, subRef.errorEl, result.entryErrors[i]?.[j] || []);
-        }));
-      }
-    }
-    return result.ok ? [] : (result.groupErrors.length ? result.groupErrors : ["Popraw pola we wpisach grupy."]);
-  }
-  const errors = localFieldErrors(viz.values[field.field_id], field.validation_rules, required);
-  if (show) showFieldErrors(field.field_id, errors);
-  return errors;
-}
-
-function scheduleValidation(field) {
-  clearTimeout(viz.timers.get(field.field_id));
-  const ref = viz.refs.get(field.field_id);
-  const required = ref?.required ?? field.required;
-  const localErrors = localFieldErrors(viz.values[field.field_id], field.validation_rules, required);
-  showFieldErrors(field.field_id, localErrors);
-  viz.timers.set(field.field_id, setTimeout(async () => {
-    const value = viz.values[field.field_id];
-    if (value === "" || value === null || value === undefined || value === false) return;
-    try {
-      const result = await api("/forms/validate-field", { method: "POST", json: { value, rules: field.validation_rules || null } });
-      if (!result.valid) showFieldErrors(field.field_id, result.errors);
-    } catch { /* serwer niedostępny — lokalna walidacja wystarcza */ }
-  }, 350));
-}
-
-function validatePage(page, show) {
-  if (!page) return true;
-  let ok = true;
-  for (const section of page.sections || []) {
-    const sectionState = computeState("SECTION", section.section_id, false);
-    if (!sectionState.visible) continue;
-    for (const field of section.fields || []) {
-      const { visible, required } = computeState("FIELD", field.field_id, field.required);
-      if (!visible) continue;
-      if (fieldErrorsFor(field, required, show).length) ok = false;
-    }
-  }
-  return ok;
-}
-
-function validateCurrentPage() {
-  return validatePage(visiblePages()[viz.pageIdx], true);
-}
-
-function markInvalidPages(invalidIdx) {
-  document.querySelectorAll("#viz-pages .viz-page-btn").forEach((btn, i) => btn.classList.toggle("invalid", invalidIdx.includes(i)));
-}
-
-function showSummary() {
-  const messages = $("viz-messages");
-  messages.replaceChildren();
-  const pages = visiblePages();
-  const invalid = pages.map((page, i) => (validatePage(page, i === viz.pageIdx) ? -1 : i)).filter((i) => i >= 0);
-  if (invalid.length) {
-    const names = invalid.map((i) => `${i + 1}. ${pages[i].title}`).join(", ");
-    $("viz-summary").classList.add("hidden");
-    $("btn-viz-download").classList.add("hidden");
-    if (!invalid.includes(viz.pageIdx)) {
-      viz.pageIdx = invalid[0];
-      renderCurrentPage().then(() => { validateCurrentPage(); markInvalidPages(invalid); });
-    } else markInvalidPages(invalid);
-    messages.append(el("div", { class: "err", text: `Popraw błędy przed podsumowaniem. Strony z błędami: ${names}.` }));
-    return;
-  }
-  markInvalidPages([]);
-  const payload = { form_id: viz.form.metadata?.form_id, title: viz.form.metadata?.title, values: {} };
-  for (const page of visiblePages()) {
-    for (const section of page.sections || []) {
-      if (!computeState("SECTION", section.section_id, false).visible) continue;
-      for (const field of section.fields || []) {
-        const { visible } = computeState("FIELD", field.field_id, field.required);
-        if (!visible) continue;
-        const value = viz.values[field.field_id];
-        payload.values[field.field_id] = field.field_type === "repeatable_group"
-          ? (value || []).filter((entry) => !entryIsEmpty(entry))
-          : value;
-      }
-    }
-  }
-  const summary = $("viz-summary");
-  summary.textContent = JSON.stringify(payload, null, 2);
-  summary.classList.remove("hidden");
-  $("btn-viz-download").classList.remove("hidden");
-  messages.append(el("div", { class: "ok", text: "Wniosek gotowy — dane zebrane z widocznych pól e-Usługi." }));
 }
 
 /* ---------------- Init ---------------- */
@@ -1378,20 +893,11 @@ function bindEvents() {
   $("btn-cancel").addEventListener("click", cancelImport);
   $("btn-download-all").addEventListener("click", downloadAllResults);
 
-  $("btn-viz-prev").addEventListener("click", () => { if (viz.pageIdx > 0) { viz.pageIdx -= 1; renderCurrentPage(); } });
-  $("btn-viz-next").addEventListener("click", () => {
-    if (!validateCurrentPage()) {
-      $("viz-messages").replaceChildren(el("div", { class: "err", text: "Popraw błędy na tej stronie, aby przejść dalej." }));
-      return;
-    }
-    $("viz-messages").replaceChildren();
-    viz.pageIdx += 1;
-    renderCurrentPage();
-  });
-  $("btn-viz-summary").addEventListener("click", showSummary);
-  $("btn-viz-download").addEventListener("click", () => {
-    downloadBlob($("viz-summary").textContent, `wniosek-${jsonFilename(viz.form?.metadata?.form_id)}`);
-  });
+  $("btn-load-example").addEventListener("click", loadExample);
+  $("btn-viz-prev").addEventListener("click", vizPrev);
+  $("btn-viz-next").addEventListener("click", vizNext);
+  $("btn-viz-abort").addEventListener("click", vizAbort);
+  $("btn-viz-download").addEventListener("click", vizDownloadAnswers);
   $("btn-viz-reset").addEventListener("click", () => { if (viz.form) initVisualizer(viz.form); });
 }
 
