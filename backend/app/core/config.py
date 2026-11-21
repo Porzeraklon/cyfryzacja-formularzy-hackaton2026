@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     USE_MOCK_PIPELINE: bool = True
     MODELS_DIR: Path = Path("models")
     DICTIONARIES_DIR: Path = Path("data/dictionaries")
+
+    # local = llama.cpp + wagi GGUF w MODELS_DIR; api = endpoint OpenAI-compatible.
+    LLM_BACKEND: Literal["local", "api"] = "local"
+    LLM_API_URL: str = ""
+    LLM_API_KEY: SecretStr = SecretStr("")
+    LLM_MODEL: str = ""
+    LLM_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0)
+    LLM_RESPONSE_FORMAT: Literal["json_schema", "json_object", "none"] = "json_object"
 
     CORS_ORIGINS: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
 

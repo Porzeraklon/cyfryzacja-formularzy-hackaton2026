@@ -267,13 +267,15 @@ class RealFormPipeline:
     """Kompozycja modułów Brancha 1: ingestion -> ai_extractor -> domain_logic."""
 
     def __init__(self, settings: Settings) -> None:
-        from backend.app.modules.ai_extractor.extractor import LocalStructureExtractor
+        from backend.app.modules.ai_extractor.extractor import LlmStructureExtractor
+        from backend.app.modules.ai_extractor.llm_backend import build_llm_backend
         from backend.app.modules.domain_logic.mapper import DomainLogicEnricher
         from backend.app.modules.ingestion.parsers import MultiFormatParser
 
         self._settings = settings
         self._parser = MultiFormatParser()
-        self._extractor = LocalStructureExtractor(models_dir=settings.MODELS_DIR)
+        self._llm_backend = build_llm_backend(settings)
+        self._extractor = LlmStructureExtractor(self._llm_backend)
         self._enricher = DomainLogicEnricher(dictionaries_dir=settings.DICTIONARIES_DIR)
 
     def convert(self, *, filename: str, content: bytes, mime_type: str) -> PipelineResult:
@@ -295,7 +297,7 @@ class RealFormPipeline:
         has_models = models_dir.is_dir() and any(models_dir.iterdir())
         return {
             "ocr": "ready" if has_models else "missing",
-            "llm": "ready" if has_models else "missing",
+            "llm": "ready" if self._llm_backend.ready() else "missing",
         }
 
 
