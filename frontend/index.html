@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COI Form Digitizer — Cyfryzacja formularzy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">COI</span>
+      <div>
+        <h1>Form Digitizer</h1>
+        <p class="subtitle">Cyfryzacja formularzy — 100% offline, lokalne AI/OCR</p>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span id="pipeline-badge" class="badge badge-muted">łączenie…</span>
+      <span id="env-badge" class="badge badge-muted"></span>
+    </div>
+  </header>
+
+  <section id="auth-bar" class="auth-bar hidden">
+    <label for="jwt-token">Token JWT</label>
+    <input type="password" id="jwt-token" placeholder="wklej token Bearer…" autocomplete="off">
+    <button id="btn-dev-token" class="btn btn-secondary hidden" type="button">Pobierz dev-token</button>
+    <span id="auth-status" class="muted"></span>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="import" role="tab">1. Import plików</button>
+    <button class="tab" data-tab="json" role="tab">2. JSON i słowniki</button>
+    <button class="tab" data-tab="visualizer" role="tab">3. Wizualizacja e-Usługi</button>
+  </nav>
+
+  <main>
+    <!-- ===================== IMPORT ===================== -->
+    <section id="tab-import" class="tab-panel active">
+      <div class="card">
+        <h2>Import pojedynczy i zbiorczy (batch)</h2>
+        <p id="config-info" class="muted">Wczytywanie konfiguracji…</p>
+        <div id="dropzone" class="dropzone" tabindex="0">
+          <p>Przeciągnij pliki tutaj lub</p>
+          <label class="btn btn-primary" for="file-input">Wybierz pliki</label>
+          <input type="file" id="file-input" multiple hidden>
+          <p class="muted small" id="allowed-ext"></p>
+        </div>
+        <ul id="selected-files" class="file-list"></ul>
+        <div class="actions">
+          <button id="btn-convert" class="btn btn-primary" type="button" disabled>Konwertuj</button>
+          <button id="btn-clear-files" class="btn btn-secondary" type="button">Wyczyść</button>
+        </div>
+        <div id="progress-wrap" class="progress-wrap hidden">
+          <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
+          <span id="progress-label" class="muted small"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Wyniki przetwarzania</h2>
+        <div id="batch-summary" class="muted">Brak wyników — zaimportuj pliki.</div>
+        <ul id="results-list" class="results-list"></ul>
+      </div>
+    </section>
+
+    <!-- ===================== JSON & SŁOWNIKI ===================== -->
+    <section id="tab-json" class="tab-panel">
+      <div class="card">
+        <h2>Podgląd i edycja JSON formularza COI</h2>
+        <div class="actions">
+          <button id="btn-validate-json" class="btn btn-secondary" type="button">Waliduj JSON (schemat + spójność)</button>
+          <button id="btn-apply-json" class="btn btn-primary" type="button">Zastosuj i wizualizuj</button>
+          <button id="btn-download-json" class="btn btn-secondary" type="button">Pobierz .json</button>
+        </div>
+        <div id="json-validation-output" class="validation-output"></div>
+        <textarea id="json-editor" spellcheck="false" placeholder="Tu pojawi się wygenerowany JSON formularza…"></textarea>
+      </div>
+      <div class="card">
+        <h2>Inspektor słowników COI</h2>
+        <div class="dict-columns">
+          <div>
+            <h3>Zmapowane słowniki</h3>
+            <div id="mapped-dicts" class="dict-list muted">Brak danych.</div>
+          </div>
+          <div>
+            <h3>Zaproponowane nowe słowniki</h3>
+            <div id="proposed-dicts" class="dict-list muted">Brak danych.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== WIZUALIZATOR ===================== -->
+    <section id="tab-visualizer" class="tab-panel">
+      <div class="card">
+        <div class="viz-header">
+          <h2 id="viz-title">Wizualizacja e-Usługi</h2>
+          <button id="btn-viz-reset" class="btn btn-secondary" type="button">Resetuj wartości</button>
+        </div>
+        <p class="muted">Interaktywny formularz renderowany na żywo z JSON-a: słowniki, przepływy warunkowe i walidacja (PESEL, telefon, kod pocztowy…).</p>
+        <nav id="viz-pages" class="viz-pages"></nav>
+        <form id="viz-form" novalidate></form>
+        <div class="actions viz-actions">
+          <button id="btn-viz-prev" class="btn btn-secondary" type="button">Wstecz</button>
+          <button id="btn-viz-next" class="btn btn-primary" type="button">Dalej</button>
+          <button id="btn-viz-summary" class="btn btn-primary hidden" type="button">Podsumowanie wniosku</button>
+        </div>
+        <div id="viz-messages" class="validation-output"></div>
+        <pre id="viz-summary" class="summary hidden"></pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <footer class="footer muted small">
+    COI Form Digitizer v0.1.0 — szkielet `core` (mock pipeline). Branch 1: AI/OCR, Branch 2: GUI.
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

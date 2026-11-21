@@ -1,0 +1,58 @@
+{
+  "dictionaries": [
+    {
+      "dictionary_id": "dict_voivodeships",
+      "name": "Województwa",
+      "description": "Słownik województw RP (dane inicjalne COI).",
+      "items": [
+        { "code": "02", "label": "dolnośląskie" },
+        { "code": "04", "label": "kujawsko-pomorskie" },
+        { "code": "06", "label": "lubelskie" },
+        { "code": "08", "label": "lubuskie" },
+        { "code": "10", "label": "łódzkie" },
+        { "code": "12", "label": "małopolskie" },
+        { "code": "14", "label": "mazowieckie" },
+        { "code": "16", "label": "opolskie" },
+        { "code": "18", "label": "podkarpackie" },
+        { "code": "20", "label": "podlaskie" },
+        { "code": "22", "label": "pomorskie" },
+        { "code": "24", "label": "śląskie" },
+        { "code": "26", "label": "świętokrzyskie" },
+        { "code": "28", "label": "warmińsko-mazurskie" },
+        { "code": "30", "label": "wielkopolskie" },
+        { "code": "32", "label": "zachodniopomorskie" }
+      ]
+    },
+    {
+      "dictionary_id": "dict_gender",
+      "name": "Płeć",
+      "description": "Słownik płci (dane inicjalne COI).",
+      "items": [
+        { "code": "K", "label": "kobieta" },
+        { "code": "M", "label": "mężczyzna" }
+      ]
+    },
+    {
+      "dictionary_id": "dict_document_types",
+      "name": "Rodzaje dokumentów tożsamości",
+      "description": "Słownik dokumentów tożsamości akceptowanych w e-Usługach COI.",
+      "items": [
+        { "code": "dowod_osobisty", "label": "Dowód osobisty" },
+        { "code": "paszport", "label": "Paszport" },
+        { "code": "karta_pobytu", "label": "Karta pobytu" },
+        { "code": "prawo_jazdy", "label": "Prawo jazdy" }
+      ]
+    },
+    {
+      "dictionary_id": "dict_marital_status",
+      "name": "Stany cywilne",
+      "description": "Słownik stanów cywilnych (dane inicjalne COI).",
+      "items": [
+        { "code": "kawaler_panna", "label": "kawaler / panna" },
+        { "code": "zonaty_zamezna", "label": "żonaty / zamężna" },
+        { "code": "rozwiedziony", "label": "rozwiedziony / rozwiedziona" },
+        { "code": "wdowiec_wdowa", "label": "wdowiec / wdowa" }
+      ]
+    }
+  ]
+}

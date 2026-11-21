@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: coi-form-digitizer:0.1.0   # jawny tag, zero :latest
+    ports:
+      - "8000:8000"                  # wyłącznie port aplikacji
+    env_file:
+      - .env                         # konfiguracja i sekrety WYŁĄCZNIE w runtime
+    volumes:
+      - ./data:/app/data:ro          # baza słowników COI (Branch 1)
+      - models_data:/app/models:ro   # lokalne wagi modeli AI/OCR (offline)
+    read_only: true                  # ulotne przetwarzanie: zero trwałych zapisów
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  models_data:

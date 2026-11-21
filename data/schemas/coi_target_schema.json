@@ -1,0 +1,621 @@
+{
+  "$defs": {
+    "ConditionOperator": {
+      "enum": [
+        "EQUALS",
+        "NOT_EQUALS",
+        "IN",
+        "IS_EMPTY",
+        "GREATER_THAN"
+      ],
+      "title": "ConditionOperator",
+      "type": "string"
+    },
+    "ConditionalFlow": {
+      "additionalProperties": false,
+      "properties": {
+        "source_field_id": {
+          "title": "Source Field Id",
+          "type": "string"
+        },
+        "operator": {
+          "$ref": "#/$defs/ConditionOperator"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "target_type": {
+          "$ref": "#/$defs/TargetType"
+        },
+        "target_id": {
+          "title": "Target Id",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/FlowAction"
+        },
+        "action_value": {
+          "default": null,
+          "title": "Action Value"
+        }
+      },
+      "required": [
+        "source_field_id",
+        "operator",
+        "target_type",
+        "target_id",
+        "action"
+      ],
+      "title": "ConditionalFlow",
+      "type": "object"
+    },
+    "CustomValidator": {
+      "enum": [
+        "PESEL",
+        "PL_PHONE",
+        "NIP",
+        "REGON",
+        "POSTAL_CODE"
+      ],
+      "title": "CustomValidator",
+      "type": "string"
+    },
+    "DataType": {
+      "enum": [
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "date"
+      ],
+      "title": "DataType",
+      "type": "string"
+    },
+    "DictionariesBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "mapped_dictionaries": {
+          "items": {
+            "$ref": "#/$defs/MappedDictionary"
+          },
+          "title": "Mapped Dictionaries",
+          "type": "array"
+        },
+        "proposed_dictionaries": {
+          "items": {
+            "$ref": "#/$defs/ProposedDictionary"
+          },
+          "title": "Proposed Dictionaries",
+          "type": "array"
+        }
+      },
+      "title": "DictionariesBlock",
+      "type": "object"
+    },
+    "DictionaryItem": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "label"
+      ],
+      "title": "DictionaryItem",
+      "type": "object"
+    },
+    "FieldDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "field_id": {
+          "title": "Field Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "field_type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "placeholder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Placeholder"
+        },
+        "help_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Help Text"
+        },
+        "initial_value": {
+          "default": null,
+          "title": "Initial Value"
+        },
+        "dictionary_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dictionary Ref"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/DictionaryItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        },
+        "validation_rules": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationRules"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dependencies": {
+          "items": {
+            "$ref": "#/$defs/ConditionalFlow"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/FieldDefinition"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        }
+      },
+      "required": [
+        "field_id",
+        "name",
+        "label",
+        "field_type"
+      ],
+      "title": "FieldDefinition",
+      "type": "object"
+    },
+    "FieldType": {
+      "enum": [
+        "text",
+        "number",
+        "date",
+        "select",
+        "radio",
+        "checkbox",
+        "textarea",
+        "file",
+        "repeatable_group"
+      ],
+      "title": "FieldType",
+      "type": "string"
+    },
+    "FlowAction": {
+      "enum": [
+        "SHOW",
+        "HIDE",
+        "REQUIRE",
+        "OPTIONAL",
+        "SET_VALUE"
+      ],
+      "title": "FlowAction",
+      "type": "string"
+    },
+    "FormMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "form_id": {
+          "title": "Form Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "version": {
+          "default": "1.0.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "source_filename": {
+          "title": "Source Filename",
+          "type": "string"
+        },
+        "source_format": {
+          "title": "Source Format",
+          "type": "string"
+        },
+        "generated_at": {
+          "format": "date-time",
+          "title": "Generated At",
+          "type": "string"
+        },
+        "ai_agent_ready": {
+          "default": true,
+          "title": "Ai Agent Ready",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "form_id",
+        "title",
+        "source_filename",
+        "source_format",
+        "generated_at"
+      ],
+      "title": "FormMetadata",
+      "type": "object"
+    },
+    "MappedDictionary": {
+      "additionalProperties": false,
+      "properties": {
+        "field_id": {
+          "title": "Field Id",
+          "type": "string"
+        },
+        "dictionary_id": {
+          "title": "Dictionary Id",
+          "type": "string"
+        },
+        "dictionary_name": {
+          "title": "Dictionary Name",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "field_id",
+        "dictionary_id",
+        "dictionary_name",
+        "confidence"
+      ],
+      "title": "MappedDictionary",
+      "type": "object"
+    },
+    "PageDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "page_id": {
+          "title": "Page Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 1,
+          "title": "Order",
+          "type": "integer"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "visibility_rules": {
+          "items": {
+            "$ref": "#/$defs/ConditionalFlow"
+          },
+          "title": "Visibility Rules",
+          "type": "array"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/SectionDefinition"
+          },
+          "title": "Sections",
+          "type": "array"
+        }
+      },
+      "required": [
+        "page_id",
+        "title",
+        "order"
+      ],
+      "title": "PageDefinition",
+      "type": "object"
+    },
+    "ProposedDictionary": {
+      "additionalProperties": false,
+      "properties": {
+        "proposed_id": {
+          "title": "Proposed Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "target_field_id": {
+          "title": "Target Field Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/DictionaryItem"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposed_id",
+        "name",
+        "target_field_id",
+        "reason"
+      ],
+      "title": "ProposedDictionary",
+      "type": "object"
+    },
+    "SectionDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "section_id": {
+          "title": "Section Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 1,
+          "title": "Order",
+          "type": "integer"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "visibility_rules": {
+          "items": {
+            "$ref": "#/$defs/ConditionalFlow"
+          },
+          "title": "Visibility Rules",
+          "type": "array"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FieldDefinition"
+          },
+          "title": "Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "section_id",
+        "title",
+        "order"
+      ],
+      "title": "SectionDefinition",
+      "type": "object"
+    },
+    "TargetType": {
+      "enum": [
+        "FIELD",
+        "SECTION",
+        "PAGE"
+      ],
+      "title": "TargetType",
+      "type": "string"
+    },
+    "ValidationRules": {
+      "additionalProperties": false,
+      "properties": {
+        "data_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DataType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min_length": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Length"
+        },
+        "max_length": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Length"
+        },
+        "min_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Value"
+        },
+        "max_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Value"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "custom_validator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CustomValidator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Message"
+        }
+      },
+      "title": "ValidationRules",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "$ref": "#/$defs/FormMetadata"
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/PageDefinition"
+      },
+      "minItems": 1,
+      "title": "Pages",
+      "type": "array"
+    },
+    "dictionaries": {
+      "$ref": "#/$defs/DictionariesBlock"
+    },
+    "conditional_flows": {
+      "items": {
+        "$ref": "#/$defs/ConditionalFlow"
+      },
+      "title": "Conditional Flows",
+      "type": "array"
+    }
+  },
+  "required": [
+    "metadata",
+    "pages"
+  ],
+  "title": "COI Target Form Schema",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Docelowy schemat JSON e-Uslugi COI (generowany z FormDocumentSchema, Pydantic v2)."
+}

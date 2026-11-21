@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coi-form-digitizer"
+version = "0.1.0"
+description = "Cyfryzacja formularzy (Wyzwanie COI) - lokalny pipeline AI/OCR + wizualizator e-Uslugi, 100% offline"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "COI Form Digitizer Team" }]
+
+# WYLACZNIE licencje permisywne (MIT / Apache-2.0 / BSD / ISC / PSF / MPL-2.0).
+# ZAKAZ GPL / AGPL (np. PyMuPDF/fitz jest AGPL - NIE uzywac).
+dependencies = [
+    "fastapi>=0.115,<1.0",            # MIT
+    "uvicorn>=0.30,<1.0",             # BSD-3-Clause
+    "pydantic>=2.8,<3.0",             # MIT
+    "pydantic-settings>=2.4,<3.0",    # MIT
+    "python-multipart>=0.0.9,<1.0",   # Apache-2.0
+    "PyJWT>=2.9,<3.0",                # MIT
+]
+
+[project.optional-dependencies]
+# Branch 1 (feat/backend-ai-pipeline): parsery + lokalny OCR.
+# Instalacja: pip install -e ".[ai]"
+ai = [
+    "pypdf>=5.0,<7.0",                # BSD-3-Clause (NIE PyMuPDF - AGPL!)
+    "pdfplumber>=0.11,<1.0",          # MIT
+    "pypdfium2>=4.30,<5.0",           # Apache-2.0 / BSD-3-Clause
+    "python-docx>=1.1,<2.0",          # MIT
+    "openpyxl>=3.1,<4.0",             # MIT
+    "odfpy>=1.4,<2.0",                # Apache-2.0 (dual: Apache-2.0 OR GPL - wybieramy Apache-2.0)
+    "Pillow>=10.4,<12.0",             # MIT-CMU
+    "rapidocr-onnxruntime>=1.3,<2.0", # Apache-2.0 (OCR lokalny, CPU)
+    "onnxruntime>=1.18,<2.0",         # MIT
+    "pytesseract>=0.3.10,<1.0",       # Apache-2.0 (opcjonalny fallback OCR)
+]
+# Branch 1: lokalny LLM (wagi GGUF pobierane recznie do MODELS_DIR, zero sieci w runtime).
+llm = [
+    "llama-cpp-python>=0.3,<1.0",     # MIT
+]
+dev = [
+    "pytest>=8.0,<9.0",               # MIT
+    "httpx>=0.27,<1.0",               # BSD-3-Clause
+    "pip-licenses>=5.0,<6.0",         # MIT
+    "ruff>=0.6,<1.0",                 # MIT
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
