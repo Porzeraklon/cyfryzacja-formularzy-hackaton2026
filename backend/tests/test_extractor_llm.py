@@ -104,6 +104,28 @@ def test_one_call_per_chunk():
     assert form.metadata.title == "Wniosek o zwrot nadpłaty podatku"
 
 
+def test_merged_chunks_may_exceed_four_pages():
+    def payload(prefix: str) -> str:
+        pages = [
+            {"title": f"{prefix} {i}", "sections": [{"title": "Sekcja", "fields": []}]} for i in range(1, 4)
+        ]
+        return json.dumps({"title": "Wniosek", "pages": pages})
+
+    backend = FakeBackend(payload("Strona A"), payload("Strona B"))
+    form = LlmStructureExtractor(backend).extract(parsed_document("A" * (MAX_PAGE_CHARS + 10)))
+    assert len(backend.calls) == 2
+    assert [p.title for p in form.pages] == [f"Strona {letter} {i}" for letter in "AB" for i in range(1, 4)]
+    assert [p.page_id for p in form.pages] == [f"page_{i}" for i in range(1, 7)]
+
+
+def test_single_response_with_more_than_four_pages_is_rejected():
+    payload = {"title": "Wniosek", "pages": [{"title": f"Strona {i}", "sections": []} for i in range(5)]}
+    with pytest.raises(PipelineNotReadyError) as exc:
+        LlmStructureExtractor(FakeBackend(json.dumps(payload))).extract(parsed_document())
+    assert exc.value.status_code == 503
+    assert "at most 4 items" in exc.value.details["reason"]
+
+
 def test_not_ready_backend_is_503_even_without_text():
     backend = FakeBackend(ready=False)
     with pytest.raises(PipelineNotReadyError) as exc:

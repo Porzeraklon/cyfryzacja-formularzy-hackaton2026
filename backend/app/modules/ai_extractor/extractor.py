@@ -240,7 +240,8 @@ class LlmStructureExtractor:
                     else:
                         target.sections.append(section.model_copy(deep=True))
                         sections_by_title[section_key] = target.sections[-1]
-        return _LlmDocument(title=documents[0].title, pages=list(merged.values()))
+        # max_length=4 ogranicza pojedynczą odpowiedź LLM, nie scalony dokument z paczek.
+        return _LlmDocument.model_construct(title=documents[0].title, pages=list(merged.values()))
 
     @staticmethod
     def _ensure_two_pages(pages: list[PageDefinition]) -> list[PageDefinition]:
