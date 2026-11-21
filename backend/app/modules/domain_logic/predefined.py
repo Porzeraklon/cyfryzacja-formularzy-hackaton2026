@@ -1,15 +1,16 @@
 """[OWNERSHIP: Branch 1 - feat/backend-ai-pipeline]
 
-Predefiniowane sekcje ze Standardów COI (HackNation), odwzorowane na wzorcu
-frontend/examples/wniosek-o-stwierdzenie-nadplaty-podatku.json. Wstawiane
+Predefiniowane sekcje ze Standardów COI (HackNation), odwzorowane na
+referencyjnych konfiguracjach konkursowych (testowe-formularze). Wstawiane
 deterministycznie przez DomainLogicEnricher — nigdy przez LLM.
 
-Strona „Dane wnioskodawcy” (12 sekcji): Urząd, Podmiot wniosku, Twoje dane
-(MLPZ, tylko do odczytu), Adres zamieszkania, Dane innej osoby, Adres
-zamieszkania innej osoby, Dane podmiotu, Adres siedziby, Pełnomocnictwo,
-Opłata skarbowa, Opłata skarbowa za pełnomocnictwo, Potwierdzenie
-reprezentanta. Strona „Kontakt i zgody”: Dane do kontaktu, Zgody
-i oświadczenia (CONSENT_SECTION, nie checkboxy).
+Strona „Dane wnioskodawcy” (12 sekcji, kolejność jak w referencji COI):
+Urząd, Podmiot wniosku, Twoje dane (MLPZ, tylko do odczytu), Adres
+zamieszkania, Dane podmiotu, Adres siedziby, Potwierdzenie reprezentanta,
+Dane innej osoby, Adres zamieszkania innej osoby, Pełnomocnictwo,
+Opłata skarbowa, Opłata skarbowa za pełnomocnictwo. Strona „Kontakt
+i zgody”: Dane do kontaktu, Zgody i oświadczenia (CONSENT_SECTION,
+nie checkboxy).
 
 Zależności warunkowe są osadzone w sekcjach (visibility_rules) i polach
 (dependencies); eksporter FormDefinition zamienia je na stany jsonata.
@@ -184,7 +185,30 @@ def _address_fields(prefix: str) -> list[FieldDefinition]:
             dictionary_ref="dict_voivodeships",
             dependencies=widoczne_polska(f"{prefix}wojewodztwo"),
         ),
-        _field(f"{prefix}miejscowosc", "Miejscowość", required=True),
+        _field(
+            f"{prefix}miejscowosc",
+            "Miejscowość",
+            FieldType.SELECT,
+            required=True,
+            dictionary_ref="dict_places",
+            dependencies=widoczne_polska(f"{prefix}miejscowosc"),
+        ),
+        _field(
+            f"{prefix}miejscowosc_zagranica",
+            "Miejscowość",
+            required=True,
+            rules=ValidationRules(),
+            dependencies=[
+                ConditionalFlow(
+                    source_field_id=kraj,
+                    operator=ConditionOperator.NOT_EQUALS,
+                    value=POLSKA,
+                    target_type=TargetType.FIELD,
+                    target_id=f"{prefix}miejscowosc_zagranica",
+                    action=FlowAction.SHOW,
+                )
+            ],
+        ),
         _field(
             f"{prefix}kod_pocztowy",
             "Kod pocztowy",
@@ -255,7 +279,7 @@ def applicant_sections(
     ]
     return [
         SectionDefinition(
-            section_id="urzad",
+            section_id="urzad_do_ktorego_jest_skladany_wniosek",
             title="Urząd, do którego jest składany wniosek",
             order=1,
             fields=[
@@ -306,9 +330,43 @@ def applicant_sections(
         ),
         _address_section("adres_zamieszkania", "Adres zamieszkania", "adres_zamieszkania_", 4),
         SectionDefinition(
+            section_id="dane_podmiotu",
+            title="Dane podmiotu",
+            order=5,
+            visibility_rules=[_show("w_czyim_imieniu", OSOBA_PRAWNA, "dane_podmiotu")],
+            fields=[
+                _field("podmiot_nazwa", "Nazwa", required=True),
+                _field("podmiot_nip", "NIP", required=True, validator=CustomValidator.NIP),
+                _field("podmiot_regon", "REGON", required=True, validator=CustomValidator.REGON),
+                _field("podmiot_krs", "Numer KRS", help_text="Wpisz 10 cyfr."),
+            ],
+        ),
+        _address_section("adres_siedziby", "Adres siedziby", "adres_siedziby_", 6, OSOBA_PRAWNA),
+        SectionDefinition(
+            section_id="potwierdzenie_ze_jestes_reprezentantem",
+            title="Potwierdzenie, że jesteś reprezentantem",
+            order=7,
+            visibility_rules=[
+                _compound(
+                    ConditionOperator.ALL,
+                    [_sub("w_czyim_imieniu", OSOBA_PRAWNA), _sub("jako_kto", REPREZENTANT)],
+                    "potwierdzenie_ze_jestes_reprezentantem",
+                )
+            ],
+            fields=[
+                _field(
+                    "plik_reprezentacji",
+                    "Dokument potwierdzający prawo do reprezentacji",
+                    FieldType.FILE,
+                    required=True,
+                    help_text="Na przykład odpis z KRS lub uchwała o powołaniu.",
+                ),
+            ],
+        ),
+        SectionDefinition(
             section_id="dane_innej_osoby",
             title="Dane innej osoby",
-            order=5,
+            order=8,
             visibility_rules=[_show("w_czyim_imieniu", INNA_OSOBA, "dane_innej_osoby")],
             fields=[
                 _field("inna_imie", "Imię", required=True),
@@ -323,25 +381,16 @@ def applicant_sections(
             ],
         ),
         _address_section(
-            "adres_innej_osoby", "Adres zamieszkania innej osoby", "adres_innej_osoby_", 6, INNA_OSOBA
+            "adres_zamieszkania_osoby_ktorej_jestes_pelnomocnikiem",
+            "Adres zamieszkania innej osoby",
+            "adres_innej_osoby_",
+            9,
+            INNA_OSOBA,
         ),
-        SectionDefinition(
-            section_id="dane_podmiotu",
-            title="Dane podmiotu",
-            order=7,
-            visibility_rules=[_show("w_czyim_imieniu", OSOBA_PRAWNA, "dane_podmiotu")],
-            fields=[
-                _field("podmiot_nazwa", "Nazwa", required=True),
-                _field("podmiot_nip", "NIP", required=True, validator=CustomValidator.NIP),
-                _field("podmiot_regon", "REGON", required=True, validator=CustomValidator.REGON),
-                _field("podmiot_krs", "Numer KRS", help_text="Wpisz 10 cyfr."),
-            ],
-        ),
-        _address_section("adres_siedziby", "Adres siedziby", "adres_siedziby_", 8, OSOBA_PRAWNA),
         SectionDefinition(
             section_id="pelnomocnictwo",
             title="Pełnomocnictwo",
-            order=9,
+            order=10,
             description="Dodaj dokument potwierdzający, że jesteś pełnomocnikiem.",
             visibility_rules=[
                 _compound(
@@ -360,11 +409,11 @@ def applicant_sections(
             ],
         ),
         SectionDefinition(
-            section_id="oplata_skarbowa",
+            section_id="oplata_skarbowa_pelnomocnictwo_1",
             title="Opłata skarbowa",
-            order=10,
+            order=11,
             description=_OPLATA_OPIS,
-            visibility_rules=[_show("w_czyim_imieniu", INNA_OSOBA, "oplata_skarbowa")],
+            visibility_rules=[_show("w_czyim_imieniu", INNA_OSOBA, "oplata_skarbowa_pelnomocnictwo_1")],
             fields=[
                 _field(
                     "czy_oplata",
@@ -393,37 +442,16 @@ def applicant_sections(
             ],
         ),
         SectionDefinition(
-            section_id="oplata_skarbowa_podmiot",
+            section_id="oplata_skarbowa_pelnomocnictwo_2",
             title="Opłata skarbowa za pełnomocnictwo",
-            order=11,
+            order=12,
             visibility_rules=[
-                _compound(ConditionOperator.ALL, legal_i_pelnomocnik, "oplata_skarbowa_podmiot")
+                _compound(ConditionOperator.ALL, legal_i_pelnomocnik, "oplata_skarbowa_pelnomocnictwo_2")
             ],
             fields=[
                 _field("oplata_podmiot_info", "", FieldType.TEXT_BLOCK, help_text=oplata_tekst),
                 _field(
                     "plik_przelewu_podmiot", "Plik z potwierdzeniem przelewu", FieldType.FILE, required=True
-                ),
-            ],
-        ),
-        SectionDefinition(
-            section_id="potwierdzenie_reprezentanta",
-            title="Potwierdzenie, że jesteś reprezentantem",
-            order=12,
-            visibility_rules=[
-                _compound(
-                    ConditionOperator.ALL,
-                    [_sub("w_czyim_imieniu", OSOBA_PRAWNA), _sub("jako_kto", REPREZENTANT)],
-                    "potwierdzenie_reprezentanta",
-                )
-            ],
-            fields=[
-                _field(
-                    "plik_reprezentacji",
-                    "Dokument potwierdzający prawo do reprezentacji",
-                    FieldType.FILE,
-                    required=True,
-                    help_text="Na przykład odpis z KRS lub uchwała o powołaniu.",
                 ),
             ],
         ),

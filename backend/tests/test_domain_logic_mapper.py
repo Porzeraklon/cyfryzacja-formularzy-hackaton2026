@@ -64,7 +64,13 @@ class TestEnrich:
         assert titles[-1] == CONTACT_PAGE_TITLE
         assert "Przedmiot wniosku" in titles
         ids = _section_ids(result)
-        assert {"urzad", "podmiot_wniosku", "twoje_dane", "dane_do_kontaktu", "zgody"} <= ids
+        assert {
+            "urzad_do_ktorego_jest_skladany_wniosek",
+            "podmiot_wniosku",
+            "twoje_dane",
+            "dane_do_kontaktu",
+            "zgody",
+        } <= ids
 
     def test_deterministic(self, settings):
         enricher = DomainLogicEnricher(settings.DICTIONARIES_DIR)
