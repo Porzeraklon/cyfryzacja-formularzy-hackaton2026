@@ -16,3 +16,7 @@ models/*
 *.onnx
 node_modules/
 .DS_Store
+
+# Materiały konkursowe COI (lokalnie, poza repozytorium)
+materiały/
+materialy/

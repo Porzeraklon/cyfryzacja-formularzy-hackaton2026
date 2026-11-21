@@ -17,6 +17,9 @@ class ParsedPage(BaseModel):
 
     page_number: int = Field(ge=1)
     text: str = ""
+    # Tabele rozpoznane na tej stronie (wiersze -> komórki). Parsery, które nie znają podziału
+    # na strony (DOCX/XLSX/ODS), zostawiają puste i wypełniają ParsedDocument.tables.
+    tables: list[list[list[str]]] = Field(default_factory=list)
 
 
 class ParsedDocument(BaseModel):
@@ -27,7 +30,7 @@ class ParsedDocument(BaseModel):
     source_filename: str
     source_format: str
     pages: list[ParsedPage] = Field(default_factory=list)
-    tables: list[list[list[str]]] = Field(default_factory=list)
+    tables: list[list[list[str]]] = Field(default_factory=list)  # tabele bez przypisanej strony
     used_ocr: bool = False
 
     @property

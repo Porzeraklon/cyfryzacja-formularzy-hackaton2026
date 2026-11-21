@@ -2,10 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     MODELS_DIR: Path = Path("models")
     DICTIONARIES_DIR: Path = Path("data/dictionaries")
 
-    CORS_ORIGINS: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    # NoDecode: lista po przecinku z ENV (pydantic-settings domyślnie parsuje list jako JSON).
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
     FRONTEND_DIR: Path = REPO_ROOT / "frontend"
 
