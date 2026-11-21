@@ -6,7 +6,9 @@
         "NOT_EQUALS",
         "IN",
         "IS_EMPTY",
-        "GREATER_THAN"
+        "GREATER_THAN",
+        "ALL",
+        "ANY"
       ],
       "title": "ConditionOperator",
       "type": "string"
@@ -50,13 +52,37 @@
       "title": "ConditionalFlow",
       "type": "object"
     },
+    "ConsentItem": {
+      "additionalProperties": false,
+      "description": "Pojedyncza zgoda/oświadczenie w sekcji CONSENT_SECTION (Standardy: nie checkbox).",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "ConsentItem",
+      "type": "object"
+    },
     "CustomValidator": {
+      "description": "Katalog walidatorów COI (Reguły techniczne). PL_PHONE nie występuje w katalogu.",
       "enum": [
         "PESEL",
-        "PL_PHONE",
         "NIP",
         "REGON",
-        "POSTAL_CODE"
+        "ZIP_CODE",
+        "EMAIL",
+        "EPUAP",
+        "ADE",
+        "SERIAL_NUMBER_ID_CARD"
       ],
       "title": "CustomValidator",
       "type": "string"
@@ -222,6 +248,35 @@
           ],
           "default": null,
           "title": "Fields"
+        },
+        "read_only": {
+          "default": false,
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "default_value_type": {
+          "default": "",
+          "enum": [
+            "",
+            "EXTERNAL_SYSTEM"
+          ],
+          "title": "Default Value Type",
+          "type": "string"
+        },
+        "consents": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConsentItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consents"
         }
       },
       "required": [
@@ -243,7 +298,10 @@
         "checkbox",
         "textarea",
         "file",
-        "repeatable_group"
+        "repeatable_group",
+        "consent_section",
+        "text_block",
+        "info_section"
       ],
       "title": "FieldType",
       "type": "string"
@@ -254,7 +312,8 @@
         "HIDE",
         "REQUIRE",
         "OPTIONAL",
-        "SET_VALUE"
+        "SET_VALUE",
+        "READ_ONLY"
       ],
       "title": "FlowAction",
       "type": "string"
@@ -614,8 +673,6 @@
     "metadata",
     "pages"
   ],
-  "title": "COI Target Form Schema",
-  "type": "object",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Docelowy schemat JSON e-Uslugi COI (generowany z FormDocumentSchema, Pydantic v2)."
+  "title": "FormDocumentSchema",
+  "type": "object"
 }
