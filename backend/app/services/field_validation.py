@@ -64,8 +64,9 @@ def validate_regon(value: str) -> list[str]:
         weights = _REGON14_WEIGHTS
     else:
         return ["REGON musi składać się z 9 lub 14 cyfr."]
-    total = sum(int(d) * w for d, w in zip(digits[:-1], weights, strict=True)) % 11
-    if total == 10 or total != int(digits[-1]):
+    # GUS: reszta 10 oznacza cyfrę kontrolną 0 (inaczej niż w NIP, gdzie taki numer nie istnieje).
+    total = sum(int(d) * w for d, w in zip(digits[:-1], weights, strict=True)) % 11 % 10
+    if total != int(digits[-1]):
         return ["Nieprawidłowa suma kontrolna REGON."]
     return []
 
