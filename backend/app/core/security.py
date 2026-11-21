@@ -75,9 +75,7 @@ def validate_filename(filename: str) -> str:
             {"forbidden_chars": forbidden},
         )
     if _CONTROL_CHARS_RE.search(filename):
-        raise FileValidationError(
-            "FILE_NAME_FORBIDDEN", "Nazwa pliku zawiera znaki kontrolne."
-        )
+        raise FileValidationError("FILE_NAME_FORBIDDEN", "Nazwa pliku zawiera znaki kontrolne.")
     extension = _extension_of(filename)
     if extension not in ALLOWED_EXTENSIONS:
         raise FileValidationError(

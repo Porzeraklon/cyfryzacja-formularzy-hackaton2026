@@ -45,6 +45,7 @@ class ProcessingMetadata(_ApiModel):
 class ConversionResponse(_ApiModel):
     status: Literal["success"] = "success"
     form: FormDocumentSchema
+    form_definition: dict[str, Any] | None = None
     processing: ProcessingMetadata
     warnings: list[ConversionWarning] = Field(default_factory=list)
 
@@ -97,6 +98,15 @@ class JsonValidationResponse(_ApiModel):
     schema_errors: list[str] = Field(default_factory=list)
     consistency_errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class FormDefinitionExportRequest(_ApiModel):
+    form: dict[str, Any]
+
+
+class FormDefinitionExportResponse(_ApiModel):
+    form_definition: dict[str, Any]
+    notes: list[str] = Field(default_factory=list)
 
 
 class ValidationCheckRequest(_ApiModel):

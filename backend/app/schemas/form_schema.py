@@ -9,11 +9,12 @@ UWAGA: pliki w schemas/ oraz interfaces/ są WSPÓLNE - zmiany wymagają uzgodni
 obu branchy (patrz docs/ARCHITECTURE.md).
 """
 
+import re
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class FieldType(str, Enum):
@@ -26,6 +27,9 @@ class FieldType(str, Enum):
     TEXTAREA = "textarea"
     FILE = "file"
     REPEATABLE_GROUP = "repeatable_group"
+    CONSENT_SECTION = "consent_section"
+    TEXT_BLOCK = "text_block"
+    INFO_SECTION = "info_section"
 
 
 class DataType(str, Enum):
@@ -37,11 +41,16 @@ class DataType(str, Enum):
 
 
 class CustomValidator(str, Enum):
+    """Katalog walidatorów COI (Reguły techniczne). PL_PHONE nie występuje w katalogu."""
+
     PESEL = "PESEL"
-    PL_PHONE = "PL_PHONE"
     NIP = "NIP"
     REGON = "REGON"
-    POSTAL_CODE = "POSTAL_CODE"
+    ZIP_CODE = "ZIP_CODE"
+    EMAIL = "EMAIL"
+    EPUAP = "EPUAP"
+    ADE = "ADE"
+    SERIAL_NUMBER_ID_CARD = "SERIAL_NUMBER_ID_CARD"
 
 
 class ConditionOperator(str, Enum):
@@ -50,6 +59,9 @@ class ConditionOperator(str, Enum):
     IN = "IN"
     IS_EMPTY = "IS_EMPTY"
     GREATER_THAN = "GREATER_THAN"
+    # Złożone: value = lista podwarunków {"field_id", "operator", "value"} (koniunkcja/alternatywa).
+    ALL = "ALL"
+    ANY = "ANY"
 
 
 class TargetType(str, Enum):
@@ -64,6 +76,7 @@ class FlowAction(str, Enum):
     REQUIRE = "REQUIRE"
     OPTIONAL = "OPTIONAL"
     SET_VALUE = "SET_VALUE"
+    READ_ONLY = "READ_ONLY"
 
 
 class _ContractModel(BaseModel):
@@ -73,6 +86,13 @@ class _ContractModel(BaseModel):
 class DictionaryItem(_ContractModel):
     code: str
     label: str
+
+
+class ConsentItem(_ContractModel):
+    """Pojedyncza zgoda/oświadczenie w sekcji CONSENT_SECTION (Standardy: nie checkbox)."""
+
+    description: str
+    required: bool = False
 
 
 class ValidationRules(_ContractModel):
@@ -110,6 +130,24 @@ class FieldDefinition(_ContractModel):
     validation_rules: ValidationRules | None = None
     dependencies: list[ConditionalFlow] = Field(default_factory=list)
     fields: list["FieldDefinition"] | None = None  # dla repeatable_group
+    read_only: bool = False
+    default_value_type: Literal["", "EXTERNAL_SYSTEM"] = ""
+    consents: list[ConsentItem] | None = None  # dla consent_section
+
+    @model_validator(mode="after")
+    def _check_initial_data(self) -> "FieldDefinition":
+        # Dane inicjalne (PESEL/PESEL_ADDRESS/MLPZ): pole z rejestru musi być tylko do odczytu.
+        if self.default_value_type == "EXTERNAL_SYSTEM":
+            if not self.read_only:
+                raise ValueError("Pole zasilane z rejestru (EXTERNAL_SYSTEM) musi mieć read_only=True.")
+            if not isinstance(self.initial_value, str) or not re.fullmatch(
+                r"(?:PESEL|PESEL_ADDRESS|MLPZ)\.[A-Za-z]+", self.initial_value
+            ):
+                raise ValueError(
+                    "initial_value dla EXTERNAL_SYSTEM musi mieć format ŹRÓDŁO.atrybut "
+                    "(PESEL/PESEL_ADDRESS/MLPZ)."
+                )
+        return self
 
 
 class SectionDefinition(_ContractModel):

@@ -33,5 +33,6 @@ def make_app(monkeypatch):
             monkeypatch.setenv(key, str(value))
         get_settings.cache_clear()
         return create_app()
+
     yield _make
     get_settings.cache_clear()

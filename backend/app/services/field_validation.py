@@ -1,6 +1,7 @@
-"""Prawdziwa walidacja wartości pól (działa od razu w core, współdzielona z Branch 1).
+"""Prawdziwa walidacja wartości pól — katalog walidatorów COI (Reguły techniczne).
 
-Sumy kontrolne: PESEL, NIP, REGON (9 i 14 cyfr), format PL_PHONE i POSTAL_CODE.
+Sumy kontrolne: PESEL, NIP, REGON (9 i 14 cyfr), seria i numer dowodu osobistego.
+Formaty: ZIP_CODE, EMAIL, EPUAP, ADE. Komunikaty zgodne z frontendem (formdef.js).
 """
 
 import re
@@ -13,8 +14,12 @@ _PESEL_WEIGHTS = (1, 3, 7, 9, 1, 3, 7, 9, 1, 3)
 _NIP_WEIGHTS = (6, 5, 7, 2, 3, 4, 5, 6, 7)
 _REGON9_WEIGHTS = (8, 9, 2, 3, 4, 5, 6, 7)
 _REGON14_WEIGHTS = (2, 4, 8, 5, 0, 9, 7, 3, 6, 1, 2, 4, 8)
-_PHONE_RE = re.compile(r"^(?:\+48)?\d{9}$")
-_POSTAL_RE = re.compile(r"^\d{2}-\d{3}$")
+_ID_CARD_WEIGHTS = (7, 3, 1, 0, 7, 3, 1, 7, 3)
+_ZIP_RE = re.compile(r"\d{2}-\d{3}")
+_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}")
+_EPUAP_RE = re.compile(r"/[^/\s]+/[^/\s]+")
+_ADE_RE = re.compile(r"AE:PL-\d{5}-\d{5}-[A-Z]{5}-\d{2}")
+_ID_CARD_RE = re.compile(r"[A-Z]{3}\d{6}")
 
 
 def _checksum(digits: str, weights: tuple[int, ...]) -> int:
@@ -65,16 +70,40 @@ def validate_regon(value: str) -> list[str]:
     return []
 
 
-def validate_pl_phone(value: str) -> list[str]:
-    normalized = re.sub(r"[\s\-()]", "", value.strip())
-    if not _PHONE_RE.fullmatch(normalized):
-        return ["Numer telefonu musi mieć 9 cyfr (opcjonalnie z prefiksem +48)."]
+def validate_zip_code(value: str) -> list[str]:
+    if not _ZIP_RE.fullmatch(value.strip()):
+        return ["Wpisz kod pocztowy w formacie 00-000."]
     return []
 
 
-def validate_postal_code(value: str) -> list[str]:
-    if not _POSTAL_RE.fullmatch(value.strip()):
-        return ["Kod pocztowy musi mieć format NN-NNN (np. 00-950)."]
+def validate_email(value: str) -> list[str]:
+    if not _EMAIL_RE.fullmatch(value.strip()):
+        return ["Wpisz poprawny adres e-mail, np. jan@example.pl."]
+    return []
+
+
+def validate_epuap(value: str) -> list[str]:
+    if not _EPUAP_RE.fullmatch(value.strip()):
+        return ["Wpisz adres skrytki ePUAP w formacie /nazwa_urzedu/SkrytkaESP."]
+    return []
+
+
+def validate_ade(value: str) -> list[str]:
+    if not _ADE_RE.fullmatch(value.strip().upper()):
+        return ["Wpisz adres do e-Doręczeń w formacie AE:PL-12345-67890-ABCDE-12."]
+    return []
+
+
+def validate_serial_number_id_card(value: str) -> list[str]:
+    text = re.sub(r"\s+", "", value).upper()
+    if not _ID_CARD_RE.fullmatch(text):
+        return ["Wpisz serię i numer dowodu: 3 litery i 6 cyfr, np. ABA300000."]
+    total = sum(
+        (ord(ch) - 55 if ch.isalpha() else int(ch)) * weight
+        for ch, weight in zip(text, _ID_CARD_WEIGHTS, strict=True)
+    )
+    if total % 10 != int(text[3]):
+        return ["Nieprawidłowa seria i numer dowodu osobistego (cyfra kontrolna)."]
     return []
 
 
@@ -82,8 +111,11 @@ _CUSTOM_VALIDATORS = {
     CustomValidator.PESEL: validate_pesel,
     CustomValidator.NIP: validate_nip,
     CustomValidator.REGON: validate_regon,
-    CustomValidator.PL_PHONE: validate_pl_phone,
-    CustomValidator.POSTAL_CODE: validate_postal_code,
+    CustomValidator.ZIP_CODE: validate_zip_code,
+    CustomValidator.EMAIL: validate_email,
+    CustomValidator.EPUAP: validate_epuap,
+    CustomValidator.ADE: validate_ade,
+    CustomValidator.SERIAL_NUMBER_ID_CARD: validate_serial_number_id_card,
 }
 
 

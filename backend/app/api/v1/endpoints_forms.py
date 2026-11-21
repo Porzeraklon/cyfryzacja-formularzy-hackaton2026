@@ -5,7 +5,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from backend.app.core.config import Settings, get_settings
-from backend.app.core.exceptions import AppError, BatchTooLargeError
+from backend.app.core.exceptions import AppError, BatchTooLargeError, FileValidationError
 from backend.app.core.security import read_upload_limited, require_auth, validate_upload_bytes
 from backend.app.schemas.api_models import (
     BatchConversionResponse,
@@ -13,6 +13,8 @@ from backend.app.schemas.api_models import (
     BatchSummary,
     ConversionResponse,
     ErrorDetail,
+    FormDefinitionExportRequest,
+    FormDefinitionExportResponse,
     JsonValidationRequest,
     JsonValidationResponse,
     ValidationCheckRequest,
@@ -22,6 +24,7 @@ from backend.app.schemas.form_schema import FormDocumentSchema
 from backend.app.services.dictionary_service import DictionaryService
 from backend.app.services.field_validation import validate_value
 from backend.app.services.form_consistency import validate_form_consistency
+from backend.app.services.formdefinition_export import convert_formdefinition
 from backend.app.services.pipeline_service import get_pipeline, run_conversion
 
 router = APIRouter(prefix="/forms", tags=["forms"], dependencies=[Depends(require_auth)])
@@ -106,6 +109,31 @@ def validate_json(
         consistency_errors=consistency_errors,
         warnings=warnings,
     )
+
+
+@router.post("/export-formdefinition", response_model=FormDefinitionExportResponse)
+def export_formdefinition(
+    payload: FormDefinitionExportRequest,
+    settings: Settings = Depends(get_settings),
+) -> FormDefinitionExportResponse:
+    try:
+        form = FormDocumentSchema.model_validate(payload.form)
+    except ValidationError as exc:
+        raise FileValidationError(
+            "FORM_VALIDATION_ERROR",
+            "JSON nie jest poprawny względem wewnętrznego schematu formularza.",
+            {
+                "errors": [
+                    f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()
+                ]
+            },
+        ) from exc
+    service = DictionaryService(settings)
+    known = [
+        service.get_dictionary(dictionary_id) for dictionary_id in sorted(service.known_dictionary_ids())
+    ]
+    exported = convert_formdefinition(form, known)
+    return FormDefinitionExportResponse(form_definition=exported["form"], notes=exported["notes"])
 
 
 @router.post("/validate-field", response_model=ValidationCheckResponse)

@@ -6,10 +6,18 @@ warunkowych i słownikach. Używane przez POST /forms/validate-json.
 
 from backend.app.schemas.form_schema import (
     ConditionalFlow,
+    ConditionOperator,
     FlowAction,
     FormDocumentSchema,
     TargetType,
 )
+
+
+def _iter_fields(fields: list):
+    for field in fields:
+        yield field
+        if field.fields:
+            yield from _iter_fields(field.fields)
 
 
 def validate_form_consistency(
@@ -46,11 +54,32 @@ def validate_form_consistency(
     mapped_ids = {m.dictionary_id for m in form.dictionaries.mapped_dictionaries}
     all_dictionary_ids = known_dictionary_ids | proposed_ids | mapped_ids
 
+    def _check_subconditions(value: object, context: str) -> None:
+        if not isinstance(value, list):
+            errors.append(f"{context}: operator ALL/ANY wymaga listy podwarunków w 'value'.")
+            return
+        for sub in value:
+            if not isinstance(sub, dict):
+                errors.append(f"{context}: podwarunek ALL/ANY musi być obiektem.")
+                continue
+            raw = sub.get("operator")
+            operator = raw.value if isinstance(raw, ConditionOperator) else raw
+            if operator in (ConditionOperator.ALL.value, ConditionOperator.ANY.value):
+                _check_subconditions(sub.get("value"), context)
+                continue
+            if operator not in {op.value for op in ConditionOperator}:
+                errors.append(f"{context}: nieznany operator podwarunku '{operator}'.")
+            if not sub.get("field_id"):
+                errors.append(f"{context}: podwarunek ALL/ANY nie ma 'field_id'.")
+            elif sub["field_id"] not in field_ids:
+                errors.append(
+                    f"{context}: podwarunek odwołuje się do nieistniejącego pola '{sub['field_id']}'."
+                )
+
     def _check_flow(flow: ConditionalFlow, context: str) -> None:
         if flow.source_field_id not in field_ids:
             errors.append(
-                f"{context}: reguła odwołuje się do nieistniejącego pola źródłowego "
-                f"'{flow.source_field_id}'."
+                f"{context}: reguła odwołuje się do nieistniejącego pola źródłowego '{flow.source_field_id}'."
             )
         targets = {
             TargetType.FIELD: field_ids,
@@ -63,9 +92,9 @@ def validate_form_consistency(
                 f"{flow.target_type.value} '{flow.target_id}'."
             )
         if flow.action == FlowAction.SET_VALUE and flow.action_value is None:
-            warnings.append(
-                f"{context}: akcja SET_VALUE dla '{flow.target_id}' nie ma action_value."
-            )
+            warnings.append(f"{context}: akcja SET_VALUE dla '{flow.target_id}' nie ma action_value.")
+        if flow.operator in (ConditionOperator.ALL, ConditionOperator.ANY):
+            _check_subconditions(flow.value, context)
 
     for page in form.pages:
         for flow in page.visibility_rules:
@@ -73,7 +102,7 @@ def validate_form_consistency(
         for section in page.sections:
             for flow in section.visibility_rules:
                 _check_flow(flow, f"sekcja {section.section_id}")
-            for field in section.fields:
+            for field in _iter_fields(section.fields):
                 for flow in field.dependencies:
                     _check_flow(flow, f"pole {field.field_id}")
                 if field.dictionary_ref and field.dictionary_ref not in all_dictionary_ids:
@@ -86,13 +115,10 @@ def validate_form_consistency(
 
     for mapped in form.dictionaries.mapped_dictionaries:
         if mapped.field_id not in field_ids:
-            errors.append(
-                f"mapped_dictionaries: pole '{mapped.field_id}' nie istnieje w formularzu."
-            )
+            errors.append(f"mapped_dictionaries: pole '{mapped.field_id}' nie istnieje w formularzu.")
         if known_dictionary_ids and mapped.dictionary_id not in known_dictionary_ids:
             warnings.append(
-                f"mapped_dictionaries: słownik '{mapped.dictionary_id}' nie występuje "
-                "w lokalnej bazie COI."
+                f"mapped_dictionaries: słownik '{mapped.dictionary_id}' nie występuje w lokalnej bazie COI."
             )
     for proposed in form.dictionaries.proposed_dictionaries:
         if proposed.target_field_id not in field_ids:
@@ -101,8 +127,6 @@ def validate_form_consistency(
                 "nie istnieje w formularzu."
             )
         if not proposed.items:
-            warnings.append(
-                f"proposed_dictionaries: słownik '{proposed.proposed_id}' nie ma pozycji."
-            )
+            warnings.append(f"proposed_dictionaries: słownik '{proposed.proposed_id}' nie ma pozycji.")
 
     return errors, warnings

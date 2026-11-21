@@ -5,6 +5,7 @@ import io
 from fastapi.testclient import TestClient
 
 from backend.app.schemas.form_schema import FormDocumentSchema
+from backend.app.services.formdefinition_export import iter_fields
 from backend.tests.conftest import PDF_BYTES, PNG_BYTES
 
 
@@ -52,16 +53,27 @@ class TestConvert:
         body = response.json()
         assert body["status"] == "success"
         form = FormDocumentSchema.model_validate(body["form"])
+        assert form.metadata.title == "Wniosek o stwierdzenie nadpłaty podatku"
         assert len(form.pages) == 3
         assert len(form.dictionaries.mapped_dictionaries) >= 2
         assert len(form.dictionaries.proposed_dictionaries) == 1
         assert form.conditional_flows, "mock musi zawierać przepływy warunkowe"
-        fields = {f.field_id: f for p in form.pages for s in p.sections for f in s.fields}
+        fields = {f.field_id: f for p in form.pages for s in p.sections for f in iter_fields(s.fields)}
         assert fields["pesel"].validation_rules.custom_validator.value == "PESEL"
-        assert fields["phone"].validation_rules.custom_validator.value == "PL_PHONE"
-        assert fields["postal_code"].validation_rules.custom_validator.value == "POSTAL_CODE"
+        assert fields["adres_zamieszkania_kod_pocztowy"].validation_rules.custom_validator.value == "ZIP_CODE"
+        forbidden = {"PL_PHONE", "POSTAL_CODE"}
+        assert not any(
+            f.validation_rules
+            and f.validation_rules.custom_validator
+            and f.validation_rules.custom_validator.value in forbidden
+            for f in fields.values()
+        )
+        assert "phone" not in fields and "gender" not in fields
+        fd = body["form_definition"]
+        assert [t["type"] for t in fd["tabs"]] == ["MAIN", "MAIN", "MAIN", "FINISH"]
         assert body["processing"]["pipeline_mode"] == "mock"
         assert body["processing"]["pages_count"] == 3
+        assert body["processing"]["fields_count"] > 0
         assert body["warnings"][0]["code"] == "MOCK_PIPELINE"
 
     def test_convert_forbidden_filename(self, client):
@@ -79,8 +91,13 @@ class TestConvert:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "FILE_TOO_LARGE"
 
-    def test_convert_real_pipeline_not_ready(self, make_app):
-        app = make_app(ENV="development", USE_MOCK_PIPELINE="false", JWT_AUTH_ENABLED="false")
+    def test_convert_real_pipeline_not_ready(self, make_app, tmp_path):
+        app = make_app(
+            ENV="development",
+            USE_MOCK_PIPELINE="false",
+            JWT_AUTH_ENABLED="false",
+            MODELS_DIR=str(tmp_path),
+        )
         with TestClient(app) as real_client:
             response = real_client.post("/api/v1/forms/convert", files=upload())
         assert response.status_code == 503
@@ -136,53 +153,143 @@ class TestValidation:
         assert body["schema_errors"]
 
     def test_validate_field_pesel_valid(self, client):
-        response = client.post("/api/v1/forms/validate-field", json={
-            "value": "44051401458", "rules": {"custom_validator": "PESEL"},
-        })
+        response = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "44051401458",
+                "rules": {"custom_validator": "PESEL"},
+            },
+        )
         assert response.json()["valid"] is True
 
     def test_validate_field_pesel_invalid_checksum(self, client):
-        response = client.post("/api/v1/forms/validate-field", json={
-            "value": "44051401459", "rules": {"custom_validator": "PESEL"},
-        })
+        response = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "44051401459",
+                "rules": {"custom_validator": "PESEL"},
+            },
+        )
         body = response.json()
         assert body["valid"] is False
         assert any("suma kontrolna" in error for error in body["errors"])
 
-    def test_validate_field_phone(self, client):
-        ok = client.post("/api/v1/forms/validate-field", json={
-            "value": "+48 600 100 200", "rules": {"custom_validator": "PL_PHONE"},
-        })
-        bad = client.post("/api/v1/forms/validate-field", json={
-            "value": "12345", "rules": {"custom_validator": "PL_PHONE"},
-        })
+    def test_validate_field_zip_code(self, client):
+        ok = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "00-950",
+                "rules": {"custom_validator": "ZIP_CODE"},
+            },
+        )
+        bad = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "00950",
+                "rules": {"custom_validator": "ZIP_CODE"},
+            },
+        )
         assert ok.json()["valid"] is True
         assert bad.json()["valid"] is False
 
-    def test_validate_field_postal_code(self, client):
-        ok = client.post("/api/v1/forms/validate-field", json={
-            "value": "00-950", "rules": {"custom_validator": "POSTAL_CODE"},
-        })
-        bad = client.post("/api/v1/forms/validate-field", json={
-            "value": "00950", "rules": {"custom_validator": "POSTAL_CODE"},
-        })
+    def test_validate_field_email(self, client):
+        ok = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "jan@example.pl",
+                "rules": {"custom_validator": "EMAIL"},
+            },
+        )
+        bad = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "jan@example",
+                "rules": {"custom_validator": "EMAIL"},
+            },
+        )
+        assert ok.json()["valid"] is True
+        assert bad.json()["valid"] is False
+
+    def test_validate_field_epuap(self, client):
+        ok = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "/urzad/SkrytkaESP",
+                "rules": {"custom_validator": "EPUAP"},
+            },
+        )
+        bad = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "urzad/SkrytkaESP",
+                "rules": {"custom_validator": "EPUAP"},
+            },
+        )
+        assert ok.json()["valid"] is True
+        assert bad.json()["valid"] is False
+
+    def test_validate_field_ade(self, client):
+        ok = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "AE:PL-12345-67890-ABCDE-12",
+                "rules": {"custom_validator": "ADE"},
+            },
+        )
+        bad = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "AE:PL-12345-67890-ABCDE-1",
+                "rules": {"custom_validator": "ADE"},
+            },
+        )
+        assert ok.json()["valid"] is True
+        assert bad.json()["valid"] is False
+
+    def test_validate_field_serial_number_id_card(self, client):
+        ok = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "ABA300000",
+                "rules": {"custom_validator": "SERIAL_NUMBER_ID_CARD"},
+            },
+        )
+        bad = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "ABA400000",
+                "rules": {"custom_validator": "SERIAL_NUMBER_ID_CARD"},
+            },
+        )
         assert ok.json()["valid"] is True
         assert bad.json()["valid"] is False
 
     def test_validate_field_nip_and_regon(self, client):
-        nip = client.post("/api/v1/forms/validate-field", json={
-            "value": "1234563218", "rules": {"custom_validator": "NIP"},
-        })
-        regon = client.post("/api/v1/forms/validate-field", json={
-            "value": "123456785", "rules": {"custom_validator": "REGON"},
-        })
+        nip = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "1234563218",
+                "rules": {"custom_validator": "NIP"},
+            },
+        )
+        regon = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "123456785",
+                "rules": {"custom_validator": "REGON"},
+            },
+        )
         assert nip.json()["valid"] is True
         assert regon.json()["valid"] is True
 
     def test_validate_field_length_and_pattern(self, client):
-        response = client.post("/api/v1/forms/validate-field", json={
-            "value": "ab", "rules": {"min_length": 5, "pattern": r"[A-Z]+"},
-        })
+        response = client.post(
+            "/api/v1/forms/validate-field",
+            json={
+                "value": "ab",
+                "rules": {"min_length": 5, "pattern": r"[A-Z]+"},
+            },
+        )
         body = response.json()
         assert body["valid"] is False
         assert len(body["errors"]) == 2
@@ -193,9 +300,19 @@ class TestDictionaries:
         response = client.get("/api/v1/dictionaries")
         assert response.status_code == 200
         body = response.json()
-        assert body["total"] == 4
+        assert body["total"] == 9
         ids = {entry["dictionary_id"] for entry in body["dictionaries"]}
-        assert {"dict_voivodeships", "dict_gender", "dict_document_types", "dict_marital_status"} <= ids
+        assert {
+            "dict_voivodeships",
+            "dict_gender",
+            "dict_document_types",
+            "dict_marital_status",
+            "dict_countries",
+            "dict_districts",
+            "dict_communities",
+            "dict_places",
+            "dict_dial_codes",
+        } <= ids
 
     def test_dictionary_detail(self, client):
         response = client.get("/api/v1/dictionaries/dict_voivodeships")

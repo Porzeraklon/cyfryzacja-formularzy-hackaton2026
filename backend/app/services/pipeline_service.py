@@ -1,7 +1,8 @@
 """Orkiestrator pipeline: przełącza mock <-> real przez USE_MOCK_PIPELINE.
 
-- MockFormPipeline (core): realistyczny, bogaty strukturalnie JSON wniosku
-  urzędowego, aby Branch 2 mógł testować end-to-end od pierwszej minuty.
+- MockFormPipeline (core): deterministyczny wniosek wg wzorca COI „Wniosek
+  o stwierdzenie nadpłaty podatku” — bez AI/OCR, aby Branch 2 mógł testować
+  end-to-end od pierwszej minuty.
 - RealFormPipeline: komponuje moduły Brancha 1 (backend/app/modules/).
   Stubby rzucają NotImplementedError -> API zwraca 503 PIPELINE_NOT_READY.
 """
@@ -11,355 +12,234 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from backend.app.core.config import Settings
+from backend.app.core.config import Settings, get_settings
 from backend.app.core.exceptions import PipelineNotReadyError
 from backend.app.interfaces.pipeline import FormPipeline, PipelineResult
 from backend.app.schemas.api_models import ConversionResponse, ConversionWarning, ProcessingMetadata
 from backend.app.schemas.form_schema import (
     ConditionalFlow,
     ConditionOperator,
-    CustomValidator,
-    DataType,
-    DictionariesBlock,
     DictionaryItem,
     FieldDefinition,
     FieldType,
     FlowAction,
     FormDocumentSchema,
     FormMetadata,
-    MappedDictionary,
     PageDefinition,
-    ProposedDictionary,
     SectionDefinition,
     TargetType,
     ValidationRules,
 )
+from backend.app.services.dictionary_service import DictionaryService
+from backend.app.services.formdefinition_export import convert_formdefinition, iter_fields
 
-_CASE_TYPE_ITEMS = [
-    DictionaryItem(code="zaswiadczenie", label="Wydanie zaświadczenia"),
-    DictionaryItem(code="odpis", label="Wydanie odpisu dokumentu"),
-    DictionaryItem(code="zmiana_danych", label="Zmiana danych w ewidencji"),
-    DictionaryItem(code="inna", label="Inna sprawa (opisz poniżej)"),
-]
+_ZALICZYC = "Zaliczyć na poczet przyszłego zobowiązania podatkowego"
+_ZWROT = "Zwrócić przelewem na rachunek bankowy"
 
 
-def _show_other_case_section() -> ConditionalFlow:
+def _field(field_id: str, label: str, field_type: FieldType = FieldType.TEXT, **kw) -> FieldDefinition:
+    return FieldDefinition(field_id=field_id, name=field_id, label=label, field_type=field_type, **kw)
+
+
+def _show(source: str, value: object, target: str) -> ConditionalFlow:
     return ConditionalFlow(
-        source_field_id="case_type",
+        source_field_id=source,
         operator=ConditionOperator.EQUALS,
-        value="inna",
-        target_type=TargetType.SECTION,
-        target_id="sec_case_other",
+        value=value,
+        target_type=TargetType.FIELD,
+        target_id=target,
         action=FlowAction.SHOW,
     )
 
 
-def _require_other_details() -> ConditionalFlow:
-    return ConditionalFlow(
-        source_field_id="case_type",
-        operator=ConditionOperator.EQUALS,
-        value="inna",
-        target_type=TargetType.FIELD,
-        target_id="other_case_details",
-        action=FlowAction.REQUIRE,
-    )
-
-
 def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
-    """Wielostronicowy wniosek urzędowy: 3 strony, słowniki, zależności, PESEL/telefon."""
-    show_other = _show_other_case_section()
-    require_other = _require_other_details()
+    """Wniosek o stwierdzenie nadpłaty podatku — wzorzec COI.
 
-    page_personal = PageDefinition(
-        page_id="page_applicant",
-        title="Dane wnioskodawcy",
-        order=1,
-        description="Dane identyfikacyjne osoby składającej wniosek.",
-        sections=[
-            SectionDefinition(
-                section_id="sec_personal",
-                title="Dane osobowe",
-                order=1,
-                fields=[
-                    FieldDefinition(
-                        field_id="first_name",
-                        name="first_name",
-                        label="Imię",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        placeholder="np. Jan",
-                        validation_rules=ValidationRules(
-                            data_type=DataType.STRING, min_length=2, max_length=50
-                        ),
-                    ),
-                    FieldDefinition(
-                        field_id="last_name",
-                        name="last_name",
-                        label="Nazwisko",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        placeholder="np. Kowalski",
-                        validation_rules=ValidationRules(
-                            data_type=DataType.STRING, min_length=2, max_length=80
-                        ),
-                    ),
-                    FieldDefinition(
-                        field_id="pesel",
-                        name="pesel",
-                        label="Numer PESEL",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        placeholder="11 cyfr",
-                        help_text="Numer PESEL jest weryfikowany sumą kontrolną.",
-                        validation_rules=ValidationRules(
-                            data_type=DataType.STRING,
-                            pattern=r"\d{11}",
-                            custom_validator=CustomValidator.PESEL,
-                            error_message="Podaj poprawny numer PESEL (11 cyfr, suma kontrolna).",
-                        ),
-                    ),
-                    FieldDefinition(
-                        field_id="phone",
-                        name="phone",
-                        label="Telefon kontaktowy",
-                        field_type=FieldType.TEXT,
-                        required=False,
-                        placeholder="np. +48 600 100 200",
-                        validation_rules=ValidationRules(
-                            custom_validator=CustomValidator.PL_PHONE,
-                            error_message="Podaj poprawny polski numer telefonu (9 cyfr, opcjonalnie +48).",
-                        ),
-                    ),
-                    FieldDefinition(
-                        field_id="gender",
-                        name="gender",
-                        label="Płeć",
-                        field_type=FieldType.RADIO,
-                        dictionary_ref="dict_gender",
-                    ),
-                ],
-            ),
-            SectionDefinition(
-                section_id="sec_document",
-                title="Dokument tożsamości",
-                order=2,
-                fields=[
-                    FieldDefinition(
-                        field_id="document_type",
-                        name="document_type",
-                        label="Rodzaj dokumentu tożsamości",
-                        field_type=FieldType.SELECT,
-                        required=True,
-                        dictionary_ref="dict_document_types",
-                    ),
-                    FieldDefinition(
-                        field_id="document_number",
-                        name="document_number",
-                        label="Seria i numer dokumentu",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        validation_rules=ValidationRules(
-                            data_type=DataType.STRING, min_length=5, max_length=20
-                        ),
-                    ),
-                ],
-            ),
-        ],
-    )
+    Szkielet środkowej strony („Nadpłata i deklaracja”) plus zależności; enricher
+    dokłada predefiniowane sekcje wnioskodawcy i kontaktu, słowniki TERYT/Kraje
+    oraz flows (czysta logika domenowa, bez AI/OCR). Wynik jest tożsamy z tym,
+    co realny pipeline produkuje dla tego wzorca.
+    """
+    from backend.app.modules.domain_logic.mapper import DomainLogicEnricher
 
-    page_case = PageDefinition(
-        page_id="page_case",
-        title="Adres i szczegóły sprawy",
-        order=2,
-        description="Adres zamieszkania oraz przedmiot wniosku.",
-        sections=[
-            SectionDefinition(
-                section_id="sec_address",
-                title="Adres zamieszkania",
-                order=1,
-                fields=[
-                    FieldDefinition(
-                        field_id="street",
-                        name="street",
-                        label="Ulica",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        validation_rules=ValidationRules(max_length=100),
-                    ),
-                    FieldDefinition(
-                        field_id="building_number",
-                        name="building_number",
-                        label="Numer budynku",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        validation_rules=ValidationRules(max_length=10),
-                    ),
-                    FieldDefinition(
-                        field_id="postal_code",
-                        name="postal_code",
-                        label="Kod pocztowy",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        placeholder="00-950",
-                        validation_rules=ValidationRules(
-                            custom_validator=CustomValidator.POSTAL_CODE
-                        ),
-                    ),
-                    FieldDefinition(
-                        field_id="city",
-                        name="city",
-                        label="Miejscowość",
-                        field_type=FieldType.TEXT,
-                        required=True,
-                        validation_rules=ValidationRules(max_length=80),
-                    ),
-                    FieldDefinition(
-                        field_id="voivodeship",
-                        name="voivodeship",
-                        label="Województwo",
-                        field_type=FieldType.SELECT,
-                        required=True,
-                        dictionary_ref="dict_voivodeships",
-                    ),
-                ],
-            ),
-            SectionDefinition(
-                section_id="sec_case",
-                title="Przedmiot sprawy",
-                order=2,
-                fields=[
-                    FieldDefinition(
-                        field_id="case_type",
-                        name="case_type",
-                        label="Rodzaj sprawy",
-                        field_type=FieldType.SELECT,
-                        required=True,
-                        dictionary_ref="prop_case_types",
-                        options=_CASE_TYPE_ITEMS,
-                        help_text="Słownik zaproponowany automatycznie na podstawie treści formularza.",
-                        dependencies=[show_other, require_other],
-                    ),
-                    FieldDefinition(
-                        field_id="case_description",
-                        name="case_description",
-                        label="Opis sprawy",
-                        field_type=FieldType.TEXTAREA,
-                        placeholder="Krótko opisz, czego dotyczy wniosek.",
-                        validation_rules=ValidationRules(max_length=2000),
-                    ),
-                ],
-            ),
-            SectionDefinition(
-                section_id="sec_case_other",
-                title="Szczegóły innej sprawy",
-                order=3,
-                description="Sekcja widoczna tylko dla rodzaju sprawy 'Inna sprawa'.",
-                visibility_rules=[show_other],
-                fields=[
-                    FieldDefinition(
-                        field_id="other_case_details",
-                        name="other_case_details",
-                        label="Szczegółowy opis innej sprawy",
-                        field_type=FieldType.TEXTAREA,
-                        validation_rules=ValidationRules(min_length=10, max_length=2000),
-                        dependencies=[require_other],
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    page_declarations = PageDefinition(
-        page_id="page_declarations",
-        title="Oświadczenia i załączniki",
-        order=3,
-        description="Wymagane oświadczenia oraz dokumenty dodatkowe.",
-        sections=[
-            SectionDefinition(
-                section_id="sec_attachments",
-                title="Załączniki",
-                order=1,
-                fields=[
-                    FieldDefinition(
-                        field_id="attachment",
-                        name="attachment",
-                        label="Skan dokumentu potwierdzającego",
-                        field_type=FieldType.FILE,
-                        help_text="Dopuszczalne formaty: PDF, JPG, PNG.",
-                    ),
-                ],
-            ),
-            SectionDefinition(
-                section_id="sec_declarations",
-                title="Oświadczenia",
-                order=2,
-                fields=[
-                    FieldDefinition(
-                        field_id="rodo_consent",
-                        name="rodo_consent",
-                        label="Wyrażam zgodę na przetwarzanie danych osobowych (RODO).",
-                        field_type=FieldType.CHECKBOX,
-                        required=True,
-                    ),
-                    FieldDefinition(
-                        field_id="truth_consent",
-                        name="truth_consent",
-                        label="Oświadczam, że podane dane są zgodne z prawdą.",
-                        field_type=FieldType.CHECKBOX,
-                        required=True,
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    return FormDocumentSchema(
+    raw = FormDocumentSchema(
         metadata=FormMetadata(
             form_id=f"form-{uuid4().hex[:12]}",
-            title="Wniosek o załatwienie sprawy urzędowej",
+            title="Wniosek o stwierdzenie nadpłaty podatku",
             version="1.0.0",
             source_filename=filename,
             source_format=mime_type,
             generated_at=datetime.now(UTC),
             ai_agent_ready=True,
         ),
-        pages=[page_personal, page_case, page_declarations],
-        dictionaries=DictionariesBlock(
-            mapped_dictionaries=[
-                MappedDictionary(
-                    field_id="voivodeship",
-                    dictionary_id="dict_voivodeships",
-                    dictionary_name="Województwa",
-                    confidence=0.98,
-                ),
-                MappedDictionary(
-                    field_id="document_type",
-                    dictionary_id="dict_document_types",
-                    dictionary_name="Rodzaje dokumentów tożsamości",
-                    confidence=0.95,
-                ),
-                MappedDictionary(
-                    field_id="gender",
-                    dictionary_id="dict_gender",
-                    dictionary_name="Płeć",
-                    confidence=0.9,
-                ),
-            ],
-            proposed_dictionaries=[
-                ProposedDictionary(
-                    proposed_id="prop_case_types",
-                    name="Rodzaje spraw (propozycja)",
-                    target_field_id="case_type",
-                    reason=(
-                        "Lista wyboru wywnioskowana z treści formularza; "
-                        "brak odpowiedniego słownika w lokalnej bazie COI."
+        pages=[
+            PageDefinition(
+                page_id="page_sprawa",
+                title="Nadpłata i deklaracja",
+                order=1,
+                description="Przedmiot nadpłaty, okresy, rozliczenie i korekta deklaracji.",
+                sections=[
+                    SectionDefinition(
+                        section_id="informacje_o_nadplacie",
+                        title="Informacje o nadpłacie",
+                        order=1,
+                        fields=[
+                            _field("podatek", "Podatek, którego dotyczy nadpłata", required=True),
+                            _field(
+                                "kwota",
+                                "Kwota nadpłaty",
+                                FieldType.NUMBER,
+                                required=True,
+                                placeholder="Kwota w złotych, np. 120,50",
+                            ),
+                            _field(
+                                "uzasadnienie_info",
+                                "",
+                                FieldType.TEXT_BLOCK,
+                                help_text="Opisz krótko, skąd wynika nadpłata.",
+                            ),
+                            _field(
+                                "uzasadnienie",
+                                "Uzasadnienie",
+                                FieldType.TEXTAREA,
+                                required=True,
+                                validation_rules=ValidationRules(min_length=10, max_length=2000),
+                            ),
+                        ],
                     ),
-                    items=_CASE_TYPE_ITEMS,
-                ),
-            ],
-        ),
-        conditional_flows=[show_other, require_other],
+                    SectionDefinition(
+                        section_id="sekcja_okresy",
+                        title="Okresy nadpłaty",
+                        order=2,
+                        fields=[
+                            _field(
+                                "okresy_nadplaty",
+                                "Okresy, których dotyczy nadpłata",
+                                FieldType.REPEATABLE_GROUP,
+                                help_text="Dodaj każdy rok, w którym powstała nadpłata.",
+                                fields=[
+                                    _field("okres_rok", "Rok", FieldType.NUMBER, required=True),
+                                    _field("okres_data_deklaracji", "Data deklaracji", FieldType.DATE),
+                                    _field(
+                                        "okres_kwota",
+                                        "Kwota nadpłaty w okresie",
+                                        FieldType.NUMBER,
+                                        required=True,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    SectionDefinition(
+                        section_id="rozliczenie_nadplaty",
+                        title="Rozliczenie nadpłaty",
+                        order=3,
+                        fields=[
+                            _field(
+                                "co_z_nadplata",
+                                "Co zrobić z nadpłatą?",
+                                FieldType.RADIO,
+                                required=True,
+                                options=[
+                                    DictionaryItem(code="zaliczyc", label=_ZALICZYC),
+                                    DictionaryItem(code="zwrot", label=_ZWROT),
+                                ],
+                            ),
+                            _field(
+                                "nazwa_podatku",
+                                "Nazwa podatku",
+                                required=True,
+                                dependencies=[_show("co_z_nadplata", _ZALICZYC, "nazwa_podatku")],
+                            ),
+                            _field(
+                                "numer_rachunku",
+                                "Numer rachunku bankowy",
+                                required=True,
+                                dependencies=[_show("co_z_nadplata", _ZWROT, "numer_rachunku")],
+                            ),
+                        ],
+                    ),
+                    SectionDefinition(
+                        section_id="korekta_deklaracji",
+                        title="Korekta deklaracji",
+                        order=4,
+                        fields=[
+                            _field(
+                                "korekta_info",
+                                "",
+                                FieldType.TEXT_BLOCK,
+                                help_text="Dołącz deklarację, której dotyczy korekta.",
+                            ),
+                            _field("plik_deklaracji", "Plik deklaracji", FieldType.FILE, required=True),
+                        ],
+                    ),
+                    SectionDefinition(
+                        section_id="oswiadczenia_sprawy",
+                        title="Oświadczenia",
+                        order=5,
+                        fields=[
+                            _field(
+                                "osw_prawdziwosc",
+                                "Oświadczam, że dane podane we wniosku są zgodne z prawdą.",
+                                FieldType.CHECKBOX,
+                                required=True,
+                            ),
+                            _field(
+                                "osw_zgoda",
+                                "Wyrażam zgodę na przetwarzanie danych osobowych.",
+                                FieldType.CHECKBOX,
+                                required=True,
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        ],
+        conditional_flows=[
+            ConditionalFlow(
+                source_field_id="kwota",
+                operator=ConditionOperator.GREATER_THAN,
+                value=1000,
+                target_type=TargetType.FIELD,
+                target_id="nazwa_podatku",
+                action=FlowAction.SHOW,
+            ),
+            ConditionalFlow(
+                source_field_id="co_z_nadplata",
+                operator=ConditionOperator.IN,
+                value=[_ZALICZYC, _ZWROT],
+                target_type=TargetType.SECTION,
+                target_id="korekta_deklaracji",
+                action=FlowAction.SHOW,
+            ),
+            ConditionalFlow(
+                source_field_id="uzasadnienie",
+                operator=ConditionOperator.IS_EMPTY,
+                value=None,
+                target_type=TargetType.FIELD,
+                target_id="plik_deklaracji",
+                action=FlowAction.HIDE,
+            ),
+            ConditionalFlow(
+                source_field_id="co_z_nadplata",
+                operator=ConditionOperator.EQUALS,
+                value=_ZWROT,
+                target_type=TargetType.FIELD,
+                target_id="numer_rachunku",
+                action=FlowAction.SET_VALUE,
+                action_value="PL",
+            ),
+            ConditionalFlow(
+                source_field_id="podatek",
+                operator=ConditionOperator.EQUALS,
+                value="PIT",
+                target_type=TargetType.PAGE,
+                target_id="page_sprawa",
+                action=FlowAction.SHOW,
+            ),
+        ],
     )
+    return DomainLogicEnricher(get_settings().DICTIONARIES_DIR).enrich(raw)
 
 
 class MockFormPipeline:
@@ -432,10 +312,16 @@ def run_conversion(
     result = pipeline.convert(filename=filename, content=content, mime_type=mime_type)
     elapsed_ms = (time.perf_counter() - started) * 1000
     fields_count = sum(
-        len(section.fields) for page in result.form.pages for section in page.sections
+        len(list(iter_fields(section.fields))) for page in result.form.pages for section in page.sections
     )
+    service = DictionaryService(settings)
+    known = [
+        service.get_dictionary(dictionary_id) for dictionary_id in sorted(service.known_dictionary_ids())
+    ]
+    exported = convert_formdefinition(result.form, known)
     return ConversionResponse(
         form=result.form,
+        form_definition=exported["form"],
         processing=ProcessingMetadata(
             filename=filename,
             mime_type=mime_type,
