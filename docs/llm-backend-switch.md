@@ -1,7 +1,8 @@
 # Przełącznik backendu LLM (local / api) — branch `feat/llm-backend-switch`
 
 Notatka przekazania dla pracy na tym branchu. Dotyczy wyłącznie `feat/llm-backend-switch`
-(HEAD `be6c5c1`, baza `0f071d7`); `main` ani `feat/backend-ai-pipeline` tych zmian nie mają.
+(commity `20bf4ea`..`be6c5c1` na bazie `0f071d7`, plus ten dokument); `main` ani
+`feat/backend-ai-pipeline` tych zmian nie mają.
 
 ## 1. Stan brancha
 
@@ -158,7 +159,7 @@ Niezweryfikowane:
 
 ## 7. Wznowienie pracy w nowym czacie
 
-> Jestem na branchu `feat/llm-backend-switch` (HEAD `be6c5c1`). Przełącznik LLM local/api jest
+> Jestem na branchu `feat/llm-backend-switch`. Przełącznik LLM local/api jest
 > zaimplementowany i przetestowany (122/122), ale jakość na prawdziwym modelu niezweryfikowana.
 > Chcę postawić endpoint OpenAI-compatible z Qwen i przegnać przez niego `testowe-formularze/`.
 > Zacznij od `pytest` i `/health`, potem skonfiguruj `.env` na `LLM_BACKEND=api`. Uwaga na sztywne
