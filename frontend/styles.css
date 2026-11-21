@@ -296,3 +296,66 @@ main { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem 2rem; }
 .toast.info { background: var(--primary); }
 
 .footer { text-align: center; padding: 1rem; }
+
+/* ---------- Import: postęp, anulowanie, wyniki ---------- */
+.progress-row { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; margin-top: 0.35rem; }
+.btn.small { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+.progress-bar.done { background: var(--success); }
+.progress-bar.failed { background: var(--error); }
+.results-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.result-pending { border-left: 4px solid var(--border); opacity: 0.75; }
+.result-processing { border-left: 4px solid var(--primary); }
+.badge-progress { background: #e3edfb; color: var(--primary); border-color: #bcd4f2; }
+.badge-error { background: #fbe4e2; color: var(--error); border-color: #f0bdb8; }
+
+/* ---------- Edytor JSON ---------- */
+.actions-sep { width: 1px; background: var(--border); margin: 0 0.2rem; }
+.json-editor-wrap {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfe;
+  overflow: hidden;
+  height: 460px;
+  resize: vertical;
+  min-height: 200px;
+}
+.json-editor-wrap:focus-within { border-color: var(--primary); }
+.json-editor-wrap.has-error { border-color: var(--error); }
+.json-gutter {
+  margin: 0;
+  padding: 0.8rem 0.5rem 2.4rem 0.6rem;
+  min-width: 3.2rem;
+  text-align: right;
+  color: #98a5b3;
+  background: #f0f3f7;
+  border-right: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow: hidden;
+  user-select: none;
+  white-space: pre;
+}
+.json-gutter .err-line { color: #fff; background: var(--error); border-radius: 3px; padding: 0 0.2rem; }
+#json-editor {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  outline: none;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  resize: none;
+  tab-size: 2;
+}
+.json-statusbar { display: flex; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.4rem; }
+#json-status.ok { color: var(--success); }
+#json-status.err { color: var(--error); cursor: pointer; text-decoration: underline dotted; }
+.validation-output .err.link { cursor: pointer; text-decoration: underline dotted; }
+
+/* ---------- Wizualizator: pola w grupach powtarzalnych ---------- */
+.repeatable-entry .viz-field input.invalid { border-color: var(--error); background: #fdf3f2; }
+.repeatable-entry-head { font-size: 0.8rem; font-weight: 700; color: var(--muted); margin-bottom: 0.4rem; }

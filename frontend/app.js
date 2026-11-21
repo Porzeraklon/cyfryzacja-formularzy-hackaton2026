@@ -124,6 +124,17 @@ const LOCAL_VALIDATORS = {
   POSTAL_CODE: (v) => (/^\d{2}-\d{3}$/.test(v.trim()) ? [] : ["Kod pocztowy musi mieć format NN-NNN."]),
 };
 
+function isNumeric(text) {
+  const normalized = text.replace(",", ".");
+  return normalized.trim() !== "" && Number.isFinite(Number(normalized));
+}
+
+function isValidIsoDate(text) {
+  const [y, m, d] = text.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 function localFieldErrors(value, rules, required) {
   const text = value === null || value === undefined ? "" : String(value).trim();
   if (text === "" || value === false) {
@@ -131,8 +142,34 @@ function localFieldErrors(value, rules, required) {
   }
   if (!rules) return [];
   const errors = [];
-  if (rules.min_length != null && text.length < rules.min_length) errors.push(`Minimum ${rules.min_length} znaków.`);
-  if (rules.max_length != null && text.length > rules.max_length) errors.push(`Maksimum ${rules.max_length} znaków.`);
+  switch (rules.data_type) {
+    case "integer":
+      if (!/^-?\d+$/.test(text)) errors.push("Wartość musi być liczbą całkowitą.");
+      break;
+    case "number":
+      if (!isNumeric(text)) errors.push("Wartość musi być liczbą.");
+      break;
+    case "boolean":
+      if (!["true", "false", "1", "0", "tak", "nie"].includes(text.toLowerCase())) {
+        errors.push("Wartość musi być logiczna (true/false).");
+      }
+      break;
+    case "date":
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) errors.push("Data musi mieć format RRRR-MM-DD.");
+      else if (!isValidIsoDate(text)) errors.push("Nieprawidłowa data.");
+      break;
+    default: break;
+  }
+  if (rules.min_length != null && text.length < rules.min_length) errors.push(`Wartość jest za krótka (min. ${rules.min_length} znaków).`);
+  if (rules.max_length != null && text.length > rules.max_length) errors.push(`Wartość jest za długa (maks. ${rules.max_length} znaków).`);
+  if (rules.min_value != null || rules.max_value != null) {
+    if (!isNumeric(text)) errors.push("Wartość musi być liczbą, aby sprawdzić zakres.");
+    else {
+      const numeric = Number(text.replace(",", "."));
+      if (rules.min_value != null && numeric < rules.min_value) errors.push(`Wartość jest mniejsza niż minimum (${rules.min_value}).`);
+      if (rules.max_value != null && numeric > rules.max_value) errors.push(`Wartość jest większa niż maksimum (${rules.max_value}).`);
+    }
+  }
   if (rules.pattern) {
     try { if (!new RegExp(`^(?:${rules.pattern})$`).test(text)) errors.push("Wartość nie pasuje do wymaganego wzorca."); }
     catch { /* nieprawidłowy regex po stronie serwera */ }
@@ -228,115 +265,550 @@ function renderSelectedFiles() {
   $("btn-convert").disabled = state.selectedFiles.length === 0;
 }
 
-function setProgress(percent, label, indeterminate = false) {
+function setProgress(percent, label, mode = "running") {
   $("progress-wrap").classList.remove("hidden");
   const bar = $("progress-bar");
-  bar.classList.toggle("indeterminate", indeterminate);
-  bar.style.width = indeterminate ? "40%" : `${percent}%`;
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  bar.classList.toggle("indeterminate", mode === "indeterminate");
+  bar.classList.toggle("done", mode === "done");
+  bar.classList.toggle("failed", mode === "failed");
+  bar.style.width = mode === "indeterminate" ? "40%" : `${clamped}%`;
+  bar.parentElement.setAttribute("aria-valuenow", String(clamped));
   $("progress-label").textContent = label;
 }
 
+/* Upload przez XHR (fetch nie raportuje postępu wysyłania). Błędy mają ten sam kształt co w api(). */
+function uploadForm(path, body, { onUploadProgress, onUploaded } = {}) {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
+    xhr.open("POST", `${API}${path}`);
+    if (state.token) xhr.setRequestHeader("Authorization", `Bearer ${state.token}`);
+    xhr.responseType = "text";
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable && onUploadProgress) onUploadProgress(e.loaded / e.total);
+    });
+    xhr.upload.addEventListener("load", () => onUploaded?.());
+    xhr.addEventListener("load", () => {
+      let payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch { /* odpowiedź nie-JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300 && payload) { resolve(payload); return; }
+      const err = payload?.error;
+      const error = new Error(err ? `${err.code}: ${err.message}` : `Błąd HTTP ${xhr.status}`);
+      error.code = err?.code || `HTTP_${xhr.status}`;
+      error.details = err?.details;
+      error.status = xhr.status;
+      reject(error);
+    });
+    xhr.addEventListener("error", () => {
+      const error = new Error("Brak połączenia z serwerem.");
+      error.code = "NETWORK_ERROR";
+      error.status = 0;
+      reject(error);
+    });
+    xhr.addEventListener("abort", () => {
+      const error = new Error("Przetwarzanie anulowane przez użytkownika.");
+      error.code = "CANCELLED";
+      error.cancelled = true;
+      reject(error);
+    });
+    xhr.send(body);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
+const importRun = { active: false, cancelled: false, abort: null };
+
+function errorResult(filename, error) {
+  return { filename, status: "error", error: { code: error.code || "HTTP_ERROR", message: error.message, details: error.details } };
+}
+
+/* Błąd dotyczy całego żądania (auth, sieć, limit) — ponawianie pojedynczo nic nie da. */
+function isRequestWideError(error) {
+  return error.cancelled || [0, 401, 403, 429].includes(error.status);
+}
+
+function chunk(array, size) {
+  const out = [];
+  for (let i = 0; i < array.length; i += size) out.push(array.slice(i, i + size));
+  return out;
+}
+
+async function convertSingle(file, progress) {
+  const body = new FormData();
+  body.append("file", file);
+  const request = uploadForm("/forms/convert", body, {
+    onUploadProgress: (f) => progress.upload(f),
+    onUploaded: () => progress.processing(),
+  });
+  importRun.abort = request.abort;
+  const response = await request.promise;
+  return { filename: file.name, status: "success", ...response };
+}
+
+async function convertChunk(files, progress) {
+  if (files.length === 1) {
+    try { return [await convertSingle(files[0], progress)]; }
+    catch (error) { if (error.cancelled) throw error; return [errorResult(files[0].name, error)]; }
+  }
+  const body = new FormData();
+  files.forEach((file) => body.append("files", file));
+  const request = uploadForm("/forms/convert-batch", body, {
+    onUploadProgress: (f) => progress.upload(f),
+    onUploaded: () => progress.processing(),
+  });
+  importRun.abort = request.abort;
+  try {
+    const response = await request.promise;
+    return response.results;
+  } catch (error) {
+    if (error.cancelled) throw error;
+    if (isRequestWideError(error)) return files.map((file) => errorResult(file.name, error));
+    // Batch padł w całości (np. 5xx/503) — ratujemy wyniki, przetwarzając pliki pojedynczo.
+    toast(`Batch nie powiódł się (${error.message}). Ponawiam pliki pojedynczo…`, "info");
+    const results = [];
+    for (const [index, file] of files.entries()) {
+      if (importRun.cancelled) throw Object.assign(new Error("Anulowano."), { cancelled: true });
+      progress.retry(index, files.length, file.name);
+      try { results.push(await convertSingle(file, { upload: () => {}, processing: () => {} })); }
+      catch (singleError) {
+        if (singleError.cancelled) throw singleError;
+        results.push(errorResult(file.name, singleError));
+      }
+    }
+    return results;
+  }
+}
+
 async function convertFiles() {
-  const files = state.selectedFiles;
-  if (!files.length) return;
+  const files = [...state.selectedFiles];
+  if (!files.length || importRun.active) return;
   const valid = [];
-  const localErrors = [];
+  const results = [];
   for (const file of files) {
     const error = clientFileError(file);
-    if (error) localErrors.push({ filename: file.name, status: "error", error: { code: "CLIENT_VALIDATION", message: error } });
+    if (error) results.push(errorResult(file.name, { code: "CLIENT_VALIDATION", message: error }));
     else valid.push(file);
   }
-  if (state.config && valid.length > state.config.max_batch_files) {
-    toast(`Za dużo plików w batchu (limit ${state.config.max_batch_files}).`);
-    return;
-  }
+  const batchLimit = Math.max(1, state.config?.max_batch_files || 20);
+  const chunks = chunk(valid, batchLimit);
+  const pending = new Map(valid.map((file) => [file, { filename: file.name, status: "pending" }]));
+  const startedAt = performance.now();
+
+  importRun.active = true;
+  importRun.cancelled = false;
   $("btn-convert").disabled = true;
-  const results = [...localErrors];
+  $("btn-cancel").classList.remove("hidden");
+  const publish = () => { state.results = [...results, ...pending.values()]; renderResults(); };
+  publish();
+
+  let done = 0;
+  const total = valid.length;
+  let cancelled = false;
   try {
-    if (valid.length === 1) {
-      setProgress(50, `Przetwarzanie: ${valid[0].name}…`, true);
-      const body = new FormData();
-      body.append("file", valid[0]);
-      const response = await api("/forms/convert", { method: "POST", body });
-      results.push({ filename: valid[0].name, status: "success", ...response });
-    } else if (valid.length > 1) {
-      setProgress(50, `Przetwarzanie zbiorcze: ${valid.length} plików…`, true);
-      const body = new FormData();
-      valid.forEach((file) => body.append("files", file));
-      const response = await api("/forms/convert-batch", { method: "POST", body });
-      results.push(...response.results);
+    if (!total) setProgress(100, "Brak poprawnych plików do wysłania.", "failed");
+    for (const [chunkIdx, files] of chunks.entries()) {
+      files.forEach((file) => { pending.get(file).status = "processing"; });
+      publish();
+      const prefix = chunks.length > 1 ? `Paczka ${chunkIdx + 1}/${chunks.length}: ` : "";
+      const base = (done / total) * 100;
+      const span = (files.length / total) * 100;
+      const progress = {
+        // wysyłka = 0–60% udziału paczki, przetwarzanie na serwerze = 60–100%
+        upload: (f) => setProgress(base + span * 0.6 * f, `${prefix}wysyłanie ${files.length === 1 ? files[0].name : `${files.length} plików`}… ${Math.round(f * 100)}%`),
+        processing: () => setProgress(base + span * 0.6, `${prefix}przetwarzanie na serwerze (${done + 1}–${done + files.length} z ${total})…`),
+        retry: (i, n, name) => setProgress(base + span * (i / n), `${prefix}ponawianie pojedynczo ${i + 1}/${n}: ${name}…`),
+      };
+      progress.upload(0);
+      const chunkResults = await convertChunk(files, progress);
+      files.forEach((file) => pending.delete(file));
+      results.push(...chunkResults);
+      done += files.length;
+      setProgress((done / total) * 100, `Przetworzono ${done}/${total} plików.`);
+      publish();
     }
-    setProgress(100, "Zakończono.");
   } catch (error) {
-    setProgress(100, "Błąd przetwarzania.");
-    if (valid.length === 1) {
-      results.push({ filename: valid[0].name, status: "error", error: { code: error.code || "HTTP_ERROR", message: error.message } });
-    } else {
-      toast(error.message);
+    if (!error.cancelled) throw error;
+    cancelled = true;
+    for (const entry of pending.values()) {
+      results.push(errorResult(entry.filename, { code: "CANCELLED", message: "Anulowano przed zakończeniem przetwarzania." }));
     }
+    pending.clear();
   } finally {
-    $("btn-convert").disabled = false;
+    importRun.active = false;
+    importRun.abort = null;
+    $("btn-convert").disabled = state.selectedFiles.length === 0;
+    $("btn-cancel").classList.add("hidden");
   }
+
   state.results = results;
   renderResults();
+  const ok = results.filter((r) => r.status === "success").length;
+  const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
+  if (cancelled) setProgress((done / Math.max(total, 1)) * 100, `Anulowano. Przetworzono ${done}/${total} plików (${seconds} s).`, "failed");
+  else if (total) {
+    setProgress(100, `Zakończono: ${ok}/${results.length} poprawnie, ${results.length - ok} z błędem (${seconds} s).`,
+      ok === results.length ? "done" : ok === 0 ? "failed" : "running");
+  }
   const firstSuccess = results.find((r) => r.status === "success");
-  if (firstSuccess) openForm(firstSuccess.form);
+  if (firstSuccess) openForm(firstSuccess.form, { switchTo: results.length === 1 ? "json" : null });
 }
+
+function cancelImport() {
+  if (!importRun.active) return;
+  importRun.cancelled = true;
+  importRun.abort?.();
+}
+
+function downloadBlob(content, filename) {
+  const blob = new Blob([content], { type: "application/json" });
+  const link = el("a", { href: URL.createObjectURL(blob), download: filename });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function jsonFilename(sourceName) {
+  const base = (sourceName || "coi-form").replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}._-]+/gu, "_");
+  return `${base || "coi-form"}.json`;
+}
+
+function downloadAllResults() {
+  const successes = state.results.filter((r) => r.status === "success");
+  if (!successes.length) return;
+  const bundle = {
+    generated_at: new Date().toISOString(),
+    summary: {
+      total: state.results.length,
+      succeeded: successes.length,
+      failed: state.results.filter((r) => r.status === "error").length,
+    },
+    results: state.results.map((r) => (r.status === "success"
+      ? { filename: r.filename, status: r.status, form: r.form, warnings: r.warnings || [] }
+      : { filename: r.filename, status: r.status, error: r.error })),
+  };
+  downloadBlob(JSON.stringify(bundle, null, 2), "coi-batch-wyniki.json");
+}
+
+const RESULT_BADGES = {
+  success: ["badge-real", "OK"],
+  error: ["badge-error", "BŁĄD"],
+  pending: ["badge-muted", "w kolejce"],
+  processing: ["badge-progress", "przetwarzanie…"],
+};
 
 function renderResults() {
   const list = $("results-list");
   list.replaceChildren();
-  const succeeded = state.results.filter((r) => r.status === "success").length;
-  $("batch-summary").textContent = `Wyniki: ${succeeded}/${state.results.length} poprawnie przetworzonych.`;
+  const finished = state.results.filter((r) => r.status === "success" || r.status === "error");
+  const succeeded = finished.filter((r) => r.status === "success").length;
+  const failed = finished.length - succeeded;
+  const waiting = state.results.length - finished.length;
+  $("batch-summary").textContent = state.results.length
+    ? `Wyniki: ${succeeded}/${state.results.length} poprawnie • ${failed} z błędem${waiting ? ` • ${waiting} w toku` : ""}.`
+    : "Brak wyników — zaimportuj pliki.";
+  $("btn-download-all").classList.toggle("hidden", succeeded === 0 || waiting > 0);
   for (const result of state.results) {
     const details = el("div", { class: "result-details" });
     if (result.status === "error") {
       details.append(el("div", { class: "err", text: `${result.error.code}: ${result.error.message}` }));
-    } else {
+    } else if (result.status === "success") {
       const p = result.processing;
-      details.append(el("div", { class: "muted", text:
-        `${p.pages_count} stron • ${p.fields_count} pól • ${p.processing_time_ms} ms • ${p.mime_type} • tryb ${p.pipeline_mode}` }));
+      if (p) {
+        details.append(el("div", { class: "muted", text:
+          `${p.pages_count} stron • ${p.fields_count} pól • ${p.processing_time_ms} ms • ${p.mime_type} • tryb ${p.pipeline_mode}` }));
+      }
       for (const warning of result.warnings || []) {
         details.append(el("div", { class: "warn", text: `⚠ ${warning.code}: ${warning.message}` }));
       }
     }
-    list.append(el("li", { class: result.status === "success" ? "result-success" : "result-error" },
+    const [badgeClass, badgeText] = RESULT_BADGES[result.status] || RESULT_BADGES.error;
+    list.append(el("li", { class: `result-${result.status}` },
       el("span", { class: "file-name", text: result.filename }),
-      el("span", { class: `badge ${result.status === "success" ? "badge-real" : "badge-mock"}`, text: result.status === "success" ? "OK" : "BŁĄD" }),
+      el("span", { class: `badge ${badgeClass}`, text: badgeText }),
       result.status === "success"
-        ? el("button", { class: "btn btn-secondary small", type: "button", onclick: () => openForm(result.form) }, "Otwórz JSON i wizualizację")
+        ? [
+          el("button", { class: "btn btn-secondary small", type: "button", onclick: () => openForm(result.form) }, "Otwórz JSON i wizualizację"),
+          el("button", { class: "btn btn-secondary small", type: "button",
+            onclick: () => downloadBlob(JSON.stringify(result.form, null, 2), jsonFilename(result.filename)) }, "Pobierz JSON"),
+        ]
         : null,
-      details,
+      details.childNodes.length ? details : null,
     ));
   }
 }
 
 /* ---------------- JSON + inspektor słowników ---------------- */
 
-function openForm(form) {
+function openForm(form, { switchTo = "json" } = {}) {
   state.currentForm = form;
-  $("json-editor").value = JSON.stringify(form, null, 2);
+  setEditorText(JSON.stringify(form, null, 2));
   $("json-validation-output").replaceChildren();
   renderDictionaryInspector(form);
   initVisualizer(form);
-  switchTab("json");
+  if (switchTo) switchTab(switchTo);
+}
+
+/* ---------------- Edytor JSON (textarea + numery linii + diagnostyka składni) ---------------- */
+
+const editor = { parseTimer: null, lastError: null };
+
+function setEditorText(text) {
+  $("json-editor").value = text;
+  refreshEditor();
+}
+
+/* Pozycja błędu JSON.parse: Chrome/Node podają "position N" lub "line L column C", Firefox "line L column C". */
+function jsonErrorLocation(message, text) {
+  const lineCol = /line (\d+) column (\d+)/i.exec(message);
+  if (lineCol) {
+    const line = Number(lineCol[1]);
+    const column = Number(lineCol[2]);
+    const lines = text.split("\n");
+    let offset = 0;
+    for (let i = 0; i < line - 1 && i < lines.length; i += 1) offset += lines[i].length + 1;
+    return { line, column, offset: offset + column - 1 };
+  }
+  const pos = /position (\d+)/i.exec(message);
+  if (pos) {
+    const offset = Number(pos[1]);
+    const before = text.slice(0, offset).split("\n");
+    return { line: before.length, column: before[before.length - 1].length + 1, offset };
+  }
+  const offset = findJsonErrorOffset(text);
+  if (offset === null) return null;
+  const before = text.slice(0, offset).split("\n");
+  return { line: before.length, column: before[before.length - 1].length + 1, offset };
+}
+
+/* Minimalny skaner składni JSON — zwraca offset pierwszego błędu (nowsze Chrome nie podają pozycji). */
+function findJsonErrorOffset(text) {
+  let i = 0;
+  const ws = () => { while (i < text.length && " \t\n\r".includes(text[i])) i += 1; };
+  const fail = () => { throw i; };
+  const literal = (word) => { if (text.startsWith(word, i)) i += word.length; else fail(); };
+  const string = () => {
+    if (text[i] !== '"') fail();
+    i += 1;
+    while (i < text.length && text[i] !== '"') {
+      if (text.charCodeAt(i) < 32) fail();
+      if (text[i] === "\\") {
+        i += 1;
+        if (text[i] === "u") { if (!/^[0-9a-fA-F]{4}$/.test(text.slice(i + 1, i + 5))) fail(); i += 4; }
+        else if (!'"\\/bfnrt'.includes(text[i] ?? "x")) fail();
+      }
+      i += 1;
+    }
+    if (i >= text.length) fail();
+    i += 1;
+  };
+  const number = () => {
+    const m = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/.exec(text.slice(i, i + 400));
+    if (!m) fail();
+    i += m[0].length;
+  };
+  const value = () => {
+    ws();
+    const ch = text[i];
+    if (ch === "{") {
+      i += 1; ws();
+      if (text[i] === "}") { i += 1; return; }
+      for (;;) {
+        ws(); string(); ws();
+        if (text[i] !== ":") fail();
+        i += 1; value(); ws();
+        if (text[i] === ",") { i += 1; continue; }
+        if (text[i] === "}") { i += 1; return; }
+        fail();
+      }
+    } else if (ch === "[") {
+      i += 1; ws();
+      if (text[i] === "]") { i += 1; return; }
+      for (;;) {
+        value(); ws();
+        if (text[i] === ",") { i += 1; continue; }
+        if (text[i] === "]") { i += 1; return; }
+        fail();
+      }
+    } else if (ch === '"') string();
+    else if (ch === "t") literal("true");
+    else if (ch === "f") literal("false");
+    else if (ch === "n") literal("null");
+    else number();
+  };
+  try {
+    value(); ws();
+    return i < text.length ? i : null;
+  } catch (offset) {
+    return typeof offset === "number" ? Math.min(offset, text.length) : null;
+  }
+}
+
+function parseEditor() {
+  const text = $("json-editor").value;
+  if (!text.trim()) return { empty: true };
+  try { return { value: JSON.parse(text) }; }
+  catch (error) { return { error, location: jsonErrorLocation(error.message, text) }; }
+}
+
+function renderGutter(lineCount, errorLine) {
+  const gutter = $("json-gutter");
+  const nodes = [];
+  for (let i = 1; i <= lineCount; i += 1) {
+    if (i === errorLine) nodes.push(el("span", { class: "err-line", text: String(i) }));
+    else nodes.push(String(i));
+    if (i < lineCount) nodes.push("\n");
+  }
+  gutter.replaceChildren(...nodes);
+  gutter.scrollTop = $("json-editor").scrollTop;
+}
+
+function refreshEditor() {
+  const text = $("json-editor").value;
+  const lineCount = text.split("\n").length;
+  const status = $("json-status");
+  const result = parseEditor();
+  editor.lastError = result.error ? result : null;
+  renderGutter(lineCount, result.location?.line);
+  $("json-editor").closest(".json-editor-wrap").classList.toggle("has-error", Boolean(result.error));
+  status.className = "small";
+  if (result.empty) {
+    status.classList.add("muted");
+    status.textContent = "Pusty edytor.";
+  } else if (result.error) {
+    status.classList.add("err");
+    const where = result.location ? `linia ${result.location.line}, kolumna ${result.location.column}` : "pozycja nieznana";
+    const short = result.error.message.replace(/\s+/g, " ");
+    status.textContent = `Błąd składni JSON (${where}): ${short.length > 140 ? `${short.slice(0, 140)}…` : short}`;
+    status.title = "Kliknij, aby przejść do miejsca błędu";
+  } else {
+    status.classList.add("ok");
+    const fields = countFields(result.value);
+    const dirty = state.currentForm && JSON.stringify(result.value) !== JSON.stringify(state.currentForm);
+    status.textContent = `Składnia poprawna • ${lineCount} linii • ${fields} pól` + (dirty ? " • niezastosowane zmiany" : "");
+    status.title = "";
+  }
+}
+
+function countFields(form) {
+  let count = 0;
+  const walk = (fields) => { for (const f of fields || []) { count += 1; walk(f.fields); } };
+  for (const page of form?.pages || []) for (const section of page.sections || []) walk(section.fields);
+  return count;
+}
+
+function focusEditorAt(offset, length = 1) {
+  const area = $("json-editor");
+  area.focus();
+  area.setSelectionRange(offset, Math.min(offset + length, area.value.length));
+  const line = area.value.slice(0, offset).split("\n").length;
+  const lineHeight = parseFloat(getComputedStyle(area).lineHeight) || 18;
+  area.scrollTop = Math.max(0, (line - 5) * lineHeight);
+}
+
+/* Ścieżka z błędu Pydantic (np. "pages.0.sections.1.fields.2.label") → pozycja klucza w tekście. */
+function locateJsonPath(path) {
+  const parsed = parseEditor();
+  if (!parsed.value) return null;
+  const text = $("json-editor").value;
+  const parts = path.split(".");
+  let node = parsed.value;
+  const anchors = [];
+  for (const part of parts) {
+    if (node === null || typeof node !== "object") break;
+    if (Array.isArray(node)) {
+      const item = node[Number(part)];
+      if (item && typeof item === "object") {
+        const idKey = Object.keys(item).find((k) => /_id$/.test(k) && typeof item[k] === "string");
+        if (idKey) anchors.push(`"${idKey}": ${JSON.stringify(item[idKey])}`);
+      }
+      node = item;
+    } else {
+      if (!(part in node)) break; // brakujące pole — wskazujemy obiekt-rodzica
+      anchors.push(`"${part}":`);
+      node = node[part];
+    }
+  }
+  let offset = 0;
+  let found = -1;
+  for (const anchor of anchors) {
+    const idx = text.indexOf(anchor, offset);
+    if (idx === -1) continue;
+    found = idx;
+    offset = idx;
+  }
+  return found === -1 ? null : found;
+}
+
+function editorKeydown(e) {
+  const area = e.target;
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyJson(); return; }
+  if (e.key !== "Tab") return;
+  e.preventDefault();
+  const { selectionStart: start, selectionEnd: end, value } = area;
+  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+  if (start === end && !e.shiftKey) {
+    area.setRangeText("  ", start, end, "end");
+  } else {
+    const block = value.slice(lineStart, end);
+    const changed = e.shiftKey ? block.replace(/^ {1,2}/gm, "") : block.replace(/^/gm, "  ");
+    area.setRangeText(changed, lineStart, end, "select");
+  }
+  scheduleEditorRefresh();
+}
+
+function scheduleEditorRefresh() {
+  clearTimeout(editor.parseTimer);
+  editor.parseTimer = setTimeout(refreshEditor, 200);
+}
+
+function reformatEditor(indent) {
+  const parsed = parseEditor();
+  if (parsed.error) { toast("Nie można sformatować — popraw najpierw błąd składni."); return; }
+  if (parsed.empty) return;
+  setEditorText(JSON.stringify(parsed.value, null, indent));
+}
+
+function loadJsonFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    setEditorText(String(reader.result));
+    $("json-validation-output").replaceChildren();
+    const parsed = parseEditor();
+    if (parsed.value) toast(`Wczytano ${file.name}. Kliknij „Zastosuj i wizualizuj”.`, "info");
+    else toast(`Wczytano ${file.name}, ale JSON zawiera błąd składni.`);
+  };
+  reader.onerror = () => toast(`Nie udało się odczytać pliku ${file.name}.`);
+  reader.readAsText(file, "utf-8");
 }
 
 async function validateJson() {
   const output = $("json-validation-output");
   output.replaceChildren();
   let parsed;
-  try { parsed = JSON.parse($("json-editor").value); }
-  catch (error) {
-    output.append(el("div", { class: "err", text: `Nieprawidłowy JSON: ${error.message}` }));
+  const result0 = parseEditor();
+  if (result0.empty) { output.append(el("div", { class: "err", text: "Edytor jest pusty." })); return; }
+  if (result0.error) {
+    output.append(el("div", { class: "err", text: `Nieprawidłowy JSON: ${result0.error.message}` }));
+    if (result0.location) focusEditorAt(result0.location.offset);
     return;
   }
+  parsed = result0.value;
   try {
     const result = await api("/forms/validate-json", { method: "POST", json: { form: parsed } });
     if (result.valid) output.append(el("div", { class: "ok", text: "JSON zgodny ze schematem COI i spójny." }));
-    for (const error of [...result.schema_errors, ...result.consistency_errors]) {
-      output.append(el("div", { class: "err", text: error }));
+    const total = result.schema_errors.length + result.consistency_errors.length;
+    if (total) output.append(el("div", { class: "err", text: `Znaleziono błędów: ${total}. Kliknij błąd schematu, aby przejść do miejsca w JSON.` }));
+    for (const error of result.schema_errors) {
+      const path = error.split(":")[0];
+      output.append(el("div", { class: "err link", text: error, title: "Przejdź do miejsca w edytorze", onclick: () => {
+        const offset = locateJsonPath(path);
+        if (offset === null) toast("Nie udało się wskazać miejsca w edytorze.");
+        else focusEditorAt(offset, 1);
+      } }));
     }
+    for (const error of result.consistency_errors) output.append(el("div", { class: "err", text: error }));
     for (const warning of result.warnings) output.append(el("div", { class: "warn", text: `⚠ ${warning}` }));
   } catch (error) {
     output.append(el("div", { class: "err", text: error.message }));
@@ -344,10 +816,17 @@ async function validateJson() {
 }
 
 function applyJson() {
-  let parsed;
-  try { parsed = JSON.parse($("json-editor").value); }
-  catch (error) { toast(`Nieprawidłowy JSON: ${error.message}`); return; }
+  const result = parseEditor();
+  if (result.empty) { toast("Edytor jest pusty."); return; }
+  if (result.error) {
+    toast(`Nieprawidłowy JSON: ${result.error.message}`);
+    if (result.location) focusEditorAt(result.location.offset);
+    return;
+  }
+  const parsed = result.value;
+  if (!Array.isArray(parsed?.pages)) { toast("JSON nie zawiera tablicy „pages” — to nie wygląda na formularz COI."); return; }
   state.currentForm = parsed;
+  refreshEditor();
   renderDictionaryInspector(parsed);
   initVisualizer(parsed);
   switchTab("visualizer");
@@ -355,10 +834,10 @@ function applyJson() {
 }
 
 function downloadJson() {
-  const blob = new Blob([$("json-editor").value], { type: "application/json" });
-  const link = el("a", { href: URL.createObjectURL(blob), download: "coi-form.json" });
-  link.click();
-  URL.revokeObjectURL(link.href);
+  const text = $("json-editor").value;
+  if (!text.trim()) { toast("Edytor jest pusty."); return; }
+  const source = state.currentForm?.metadata?.source_filename;
+  downloadBlob(text, jsonFilename(source));
 }
 
 async function getDictionaryItems(dictionaryId) {
@@ -476,13 +955,22 @@ function computeState(targetType, targetId, baseRequired) {
       if (met && !viz.appliedSetValue.has(key)) {
         viz.appliedSetValue.add(key);
         viz.values[targetId] = flow.action_value;
-        const ref = viz.refs.get(targetId);
-        if (ref?.input) ref.input.value = flow.action_value ?? "";
+        setInputValue(viz.refs.get(targetId), flow.action_value);
       } else if (!met) viz.appliedSetValue.delete(key);
     }
   }
   if (showRules > 0 && !showMet) visible = false;
   return { visible, required };
+}
+
+/* Odzwierciedla wartość ustawioną przez SET_VALUE w kontrolce dowolnego typu. */
+function setInputValue(ref, value) {
+  if (!ref?.input) return;
+  const input = ref.input;
+  if (input.type === "checkbox") input.checked = value === true || value === "true";
+  else if (input.classList?.contains("radio-group")) {
+    input.querySelectorAll("input[type=radio]").forEach((radio) => { radio.checked = radio.value === String(value ?? ""); });
+  } else if (input.type !== "file") input.value = value ?? "";
 }
 
 async function resolveFieldOptions(field) {
@@ -509,6 +997,7 @@ async function initVisualizer(form) {
   }
   $("viz-title").textContent = form.metadata?.title || "Wizualizacja e-Usługi";
   $("viz-summary").classList.add("hidden");
+  $("btn-viz-download").classList.add("hidden");
   $("viz-messages").replaceChildren();
   await renderCurrentPage();
 }
@@ -537,34 +1026,47 @@ function renderPageNav() {
   $("btn-viz-summary").classList.toggle("hidden", !last);
 }
 
+let renderToken = 0;
+
 async function renderCurrentPage() {
   if (!viz.form) return;
+  const token = ++renderToken;
   const pages = visiblePages();
   if (viz.pageIdx >= pages.length) viz.pageIdx = Math.max(0, pages.length - 1);
   renderPageNav();
   const formEl = $("viz-form");
-  formEl.replaceChildren();
-  viz.refs.clear();
   const page = pages[viz.pageIdx];
   if (!page) {
-    formEl.append(el("p", { class: "muted", text: "Brak widocznych stron — zaimportuj plik lub zastosuj JSON." }));
+    viz.refs.clear();
+    formEl.replaceChildren(el("p", { class: "muted", text: "Brak widocznych stron — zaimportuj plik lub zastosuj JSON." }));
     return;
   }
-  if (page.description) formEl.append(el("p", { class: "muted", text: page.description }));
+  // Budujemy stronę poza DOM; słowniki ładują się asynchronicznie, więc starszy render
+  // (np. po szybkim kliknięciu "Dalej") nie może nadpisać nowszego.
+  const refs = new Map();
+  const fragment = document.createDocumentFragment();
+  if (page.description) fragment.append(el("p", { class: "muted", text: page.description }));
   const sections = [...(page.sections || [])].sort((a, b) => a.order - b.order);
   for (const section of sections) {
     const sectionEl = el("section", { class: "viz-section" },
       el("h3", { text: section.title }),
       section.description ? el("p", { class: "section-desc", text: section.description }) : null);
     const fields = [...(section.fields || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    for (const field of fields) sectionEl.append(await renderField(field));
-    formEl.append(sectionEl);
-    viz.refs.set(`section:${section.section_id}`, { wrap: sectionEl });
+    for (const field of fields) {
+      const node = await renderField(field, refs);
+      if (token !== renderToken) return;
+      sectionEl.append(node);
+    }
+    fragment.append(sectionEl);
+    refs.set(`section:${section.section_id}`, { wrap: sectionEl });
   }
+  if (token !== renderToken) return;
+  viz.refs = refs;
+  formEl.replaceChildren(fragment);
   applyFlows();
 }
 
-async function renderField(field) {
+async function renderField(field, refs = viz.refs) {
   const wrap = el("div", { class: "viz-field", "data-field-id": field.field_id });
   const label = el("label", { for: `input-${field.field_id}` }, field.label);
   const errorEl = el("div", { class: "field-error hidden" });
@@ -605,8 +1107,8 @@ async function renderField(field) {
       input = el("input", { type: "checkbox", id: `input-${field.field_id}`, onchange: (e) => commit(e.target.checked) });
       input.checked = viz.values[field.field_id] === true;
       wrap.append(el("label", { class: "checkbox-label", for: `input-${field.field_id}` }, input, field.label));
-      wrap.append(helpEl, errorEl);
-      viz.refs.set(field.field_id, { wrap, input, errorEl, label: null, field });
+      wrap.append(...[helpEl, errorEl].filter(Boolean));
+      refs.set(field.field_id, { wrap, input, errorEl, label: null, field });
       return wrap;
     case "file":
       input = el("input", { type: "file", id: `input-${field.field_id}`, onchange: (e) => commit(e.target.files[0]?.name || "") });
@@ -622,17 +1124,31 @@ async function renderField(field) {
     case "repeatable_group": {
       const group = el("div", { class: "repeatable-group" });
       const entries = viz.values[field.field_id] || [{}];
+      const subRefs = [];
       const renderEntries = () => {
         group.replaceChildren();
+        subRefs.length = 0;
         entries.forEach((entry, index) => {
-          const entryEl = el("div", { class: "repeatable-entry" });
+          const entryEl = el("div", { class: "repeatable-entry" },
+            el("div", { class: "repeatable-entry-head", text: `Wpis ${index + 1}` }));
+          const entryRefs = [];
           for (const sub of field.fields || []) {
-            const subInput = el("input", { type: "text", id: `input-${field.field_id}-${index}-${sub.field_id}`,
+            const inputType = { number: "number", date: "date" }[sub.field_type] || "text";
+            const subError = el("div", { class: "field-error hidden" });
+            const subInput = el("input", { type: inputType, id: `input-${field.field_id}-${index}-${sub.field_id}`,
               placeholder: sub.placeholder || "",
-              oninput: (e) => { entry[sub.field_id] = e.target.value; } });
+              oninput: (e) => {
+                entry[sub.field_id] = e.target.value;
+                viz.values[field.field_id] = entries;
+                showErrorsOn(subInput, subError, localFieldErrors(e.target.value, sub.validation_rules, sub.required));
+              } });
             subInput.value = entry[sub.field_id] ?? "";
-            entryEl.append(el("div", { class: "viz-field" }, el("label", { text: sub.label }), subInput));
+            const subLabel = el("label", { for: subInput.id }, sub.label, sub.required ? el("span", { class: "required-mark", text: " *" }) : null);
+            entryEl.append(el("div", { class: "viz-field" }, subLabel, subInput,
+              sub.help_text ? el("div", { class: "help", text: sub.help_text }) : null, subError));
+            entryRefs.push({ sub, input: subInput, errorEl: subError, entry });
           }
+          subRefs.push(entryRefs);
           entryEl.append(el("button", { class: "btn btn-secondary small", type: "button", onclick: () => {
             entries.splice(index, 1);
             if (!entries.length) entries.push({});
@@ -648,16 +1164,16 @@ async function renderField(field) {
         } }, "Dodaj wpis"));
       };
       renderEntries();
-      wrap.append(label, group, helpEl, errorEl);
-      viz.refs.set(field.field_id, { wrap, input: null, errorEl, label, field });
+      wrap.append(...[label, group, helpEl, errorEl].filter(Boolean));
+      refs.set(field.field_id, { wrap, input: null, errorEl, label, field, subRefs });
       return wrap;
     }
     default:
       input = el("input", { type: "text", id: `input-${field.field_id}`, placeholder: field.placeholder || "", oninput: (e) => commit(e.target.value) });
       input.value = viz.values[field.field_id] ?? "";
   }
-  wrap.append(label, input, helpEl, errorEl);
-  viz.refs.set(field.field_id, { wrap, input, errorEl, label, field });
+  wrap.append(...[label, input, helpEl, errorEl].filter(Boolean));
+  refs.set(field.field_id, { wrap, input, errorEl, label, field });
   return wrap;
 }
 
@@ -683,13 +1199,53 @@ function applyFlows() {
   renderPageNav();
 }
 
+function showErrorsOn(input, errorEl, errors) {
+  errorEl.replaceChildren(...errors.map((error) => el("div", { text: error })));
+  errorEl.classList.toggle("hidden", errors.length === 0);
+  if (input?.classList) input.classList.toggle("invalid", errors.length > 0);
+}
+
 function showFieldErrors(fieldId, errors) {
   const ref = viz.refs.get(fieldId);
   if (!ref) return;
-  ref.errorEl.replaceChildren();
-  ref.errorEl.classList.toggle("hidden", errors.length === 0);
-  for (const error of errors) ref.errorEl.append(el("div", { text: error }));
-  if (ref.input && ref.input.classList) ref.input.classList.toggle("invalid", errors.length > 0);
+  showErrorsOn(ref.input, ref.errorEl, errors);
+}
+
+function entryIsEmpty(entry) {
+  return Object.values(entry || {}).every((v) => v === undefined || v === null || String(v).trim() === "");
+}
+
+/* Walidacja grupy powtarzalnej: wymagalność całej grupy + reguły pól w każdym niepustym wpisie. */
+function repeatableGroupErrors(field, required) {
+  const entries = viz.values[field.field_id] || [];
+  const filled = entries.filter((entry) => !entryIsEmpty(entry));
+  const groupErrors = required && filled.length === 0 ? ["Dodaj co najmniej jeden wypełniony wpis."] : [];
+  const entryErrors = entries.map((entry) => {
+    if (entryIsEmpty(entry) && !(required && filled.length === 0 && entry === entries[0])) {
+      return (field.fields || []).map(() => []);
+    }
+    return (field.fields || []).map((sub) => localFieldErrors(entry[sub.field_id], sub.validation_rules, sub.required));
+  });
+  return { groupErrors, entryErrors, ok: groupErrors.length === 0 && entryErrors.every((e) => e.every((x) => !x.length)) };
+}
+
+function fieldErrorsFor(field, required, show) {
+  if (field.field_type === "repeatable_group") {
+    const result = repeatableGroupErrors(field, required);
+    if (show) {
+      const ref = viz.refs.get(field.field_id);
+      if (ref) {
+        showErrorsOn(null, ref.errorEl, result.groupErrors);
+        (ref.subRefs || []).forEach((entryRefs, i) => entryRefs.forEach((subRef, j) => {
+          showErrorsOn(subRef.input, subRef.errorEl, result.entryErrors[i]?.[j] || []);
+        }));
+      }
+    }
+    return result.ok ? [] : (result.groupErrors.length ? result.groupErrors : ["Popraw pola we wpisach grupy."]);
+  }
+  const errors = localFieldErrors(viz.values[field.field_id], field.validation_rules, required);
+  if (show) showFieldErrors(field.field_id, errors);
+  return errors;
 }
 
 function scheduleValidation(field) {
@@ -708,9 +1264,7 @@ function scheduleValidation(field) {
   }, 350));
 }
 
-function validateCurrentPage() {
-  const pages = visiblePages();
-  const page = pages[viz.pageIdx];
+function validatePage(page, show) {
   if (!page) return true;
   let ok = true;
   for (const section of page.sections || []) {
@@ -719,34 +1273,55 @@ function validateCurrentPage() {
     for (const field of section.fields || []) {
       const { visible, required } = computeState("FIELD", field.field_id, field.required);
       if (!visible) continue;
-      const errors = localFieldErrors(viz.values[field.field_id], field.validation_rules, required);
-      showFieldErrors(field.field_id, errors);
-      if (errors.length) ok = false;
+      if (fieldErrorsFor(field, required, show).length) ok = false;
     }
   }
   return ok;
 }
 
+function validateCurrentPage() {
+  return validatePage(visiblePages()[viz.pageIdx], true);
+}
+
+function markInvalidPages(invalidIdx) {
+  document.querySelectorAll("#viz-pages .viz-page-btn").forEach((btn, i) => btn.classList.toggle("invalid", invalidIdx.includes(i)));
+}
+
 function showSummary() {
   const messages = $("viz-messages");
   messages.replaceChildren();
-  if (!validateCurrentPage()) {
-    messages.append(el("div", { class: "err", text: "Popraw błędy na bieżącej stronie przed podsumowaniem." }));
+  const pages = visiblePages();
+  const invalid = pages.map((page, i) => (validatePage(page, i === viz.pageIdx) ? -1 : i)).filter((i) => i >= 0);
+  if (invalid.length) {
+    const names = invalid.map((i) => `${i + 1}. ${pages[i].title}`).join(", ");
+    $("viz-summary").classList.add("hidden");
+    $("btn-viz-download").classList.add("hidden");
+    if (!invalid.includes(viz.pageIdx)) {
+      viz.pageIdx = invalid[0];
+      renderCurrentPage().then(() => { validateCurrentPage(); markInvalidPages(invalid); });
+    } else markInvalidPages(invalid);
+    messages.append(el("div", { class: "err", text: `Popraw błędy przed podsumowaniem. Strony z błędami: ${names}.` }));
     return;
   }
+  markInvalidPages([]);
   const payload = { form_id: viz.form.metadata?.form_id, title: viz.form.metadata?.title, values: {} };
   for (const page of visiblePages()) {
     for (const section of page.sections || []) {
       if (!computeState("SECTION", section.section_id, false).visible) continue;
       for (const field of section.fields || []) {
         const { visible } = computeState("FIELD", field.field_id, field.required);
-        if (visible) payload.values[field.field_id] = viz.values[field.field_id];
+        if (!visible) continue;
+        const value = viz.values[field.field_id];
+        payload.values[field.field_id] = field.field_type === "repeatable_group"
+          ? (value || []).filter((entry) => !entryIsEmpty(entry))
+          : value;
       }
     }
   }
   const summary = $("viz-summary");
   summary.textContent = JSON.stringify(payload, null, 2);
   summary.classList.remove("hidden");
+  $("btn-viz-download").classList.remove("hidden");
   messages.append(el("div", { class: "ok", text: "Wniosek gotowy — dane zebrane z widocznych pól e-Usługi." }));
 }
 
@@ -778,7 +1353,7 @@ function bindEvents() {
       state.token = response.access_token;
       sessionStorage.setItem("jwt_token", state.token);
       $("jwt-token").value = state.token;
-      $("auth-status").textContent = "dev-token pobany";
+      $("auth-status").textContent = "dev-token pobrany";
       toast("Pobrano testowy token JWT.", "info");
     } catch (error) { toast(error.message); }
   });
@@ -786,6 +1361,18 @@ function bindEvents() {
   $("btn-validate-json").addEventListener("click", validateJson);
   $("btn-apply-json").addEventListener("click", applyJson);
   $("btn-download-json").addEventListener("click", downloadJson);
+  $("btn-format-json").addEventListener("click", () => reformatEditor(2));
+  $("btn-minify-json").addEventListener("click", () => reformatEditor(0));
+  $("json-file-input").addEventListener("change", (e) => { loadJsonFile(e.target.files[0]); e.target.value = ""; });
+  const area = $("json-editor");
+  area.addEventListener("input", scheduleEditorRefresh);
+  area.addEventListener("keydown", editorKeydown);
+  area.addEventListener("scroll", () => { $("json-gutter").scrollTop = area.scrollTop; });
+  $("json-status").addEventListener("click", () => {
+    if (editor.lastError?.location) focusEditorAt(editor.lastError.location.offset);
+  });
+  $("btn-cancel").addEventListener("click", cancelImport);
+  $("btn-download-all").addEventListener("click", downloadAllResults);
 
   $("btn-viz-prev").addEventListener("click", () => { if (viz.pageIdx > 0) { viz.pageIdx -= 1; renderCurrentPage(); } });
   $("btn-viz-next").addEventListener("click", () => {
@@ -798,6 +1385,9 @@ function bindEvents() {
     renderCurrentPage();
   });
   $("btn-viz-summary").addEventListener("click", showSummary);
+  $("btn-viz-download").addEventListener("click", () => {
+    downloadBlob($("viz-summary").textContent, `wniosek-${jsonFilename(viz.form?.metadata?.form_id)}`);
+  });
   $("btn-viz-reset").addEventListener("click", () => { if (viz.form) initVisualizer(viz.form); });
 }
 

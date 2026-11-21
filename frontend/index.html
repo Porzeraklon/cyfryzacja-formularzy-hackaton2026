@@ -52,13 +52,21 @@
           <button id="btn-clear-files" class="btn btn-secondary" type="button">Wyczyść</button>
         </div>
         <div id="progress-wrap" class="progress-wrap hidden">
-          <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
-          <span id="progress-label" class="muted small"></span>
+          <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="progress-label">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+          <div class="progress-row">
+            <span id="progress-label" class="muted small" aria-live="polite"></span>
+            <button id="btn-cancel" class="btn btn-secondary small hidden" type="button">Anuluj</button>
+          </div>
         </div>
       </div>
       <div class="card">
         <h2>Wyniki przetwarzania</h2>
-        <div id="batch-summary" class="muted">Brak wyników — zaimportuj pliki.</div>
+        <div class="results-head">
+          <div id="batch-summary" class="muted">Brak wyników — zaimportuj pliki.</div>
+          <button id="btn-download-all" class="btn btn-secondary small hidden" type="button">Pobierz wszystkie JSON</button>
+        </div>
         <ul id="results-list" class="results-list"></ul>
       </div>
     </section>
@@ -71,9 +79,22 @@
           <button id="btn-validate-json" class="btn btn-secondary" type="button">Waliduj JSON (schemat + spójność)</button>
           <button id="btn-apply-json" class="btn btn-primary" type="button">Zastosuj i wizualizuj</button>
           <button id="btn-download-json" class="btn btn-secondary" type="button">Pobierz .json</button>
+          <span class="actions-sep" aria-hidden="true"></span>
+          <button id="btn-format-json" class="btn btn-secondary" type="button" title="Sformatuj (wcięcia 2 spacje)">Formatuj</button>
+          <button id="btn-minify-json" class="btn btn-secondary" type="button" title="Zapisz w jednej linii">Minifikuj</button>
+          <label class="btn btn-secondary" for="json-file-input">Wczytaj .json</label>
+          <input type="file" id="json-file-input" accept=".json,application/json" hidden>
         </div>
         <div id="json-validation-output" class="validation-output"></div>
-        <textarea id="json-editor" spellcheck="false" placeholder="Tu pojawi się wygenerowany JSON formularza…"></textarea>
+        <div class="json-editor-wrap">
+          <pre id="json-gutter" class="json-gutter" aria-hidden="true">1</pre>
+          <textarea id="json-editor" spellcheck="false" wrap="off" aria-label="Edytor JSON formularza"
+            placeholder="Tu pojawi się wygenerowany JSON formularza…"></textarea>
+        </div>
+        <div class="json-statusbar">
+          <span id="json-status" class="muted small">Pusty edytor.</span>
+          <span class="muted small">Tab: wcięcie • Ctrl+Enter: zastosuj i wizualizuj</span>
+        </div>
       </div>
       <div class="card">
         <h2>Inspektor słowników COI</h2>
@@ -107,6 +128,9 @@
         </div>
         <div id="viz-messages" class="validation-output"></div>
         <pre id="viz-summary" class="summary hidden"></pre>
+        <div class="actions">
+          <button id="btn-viz-download" class="btn btn-secondary hidden" type="button">Pobierz wniosek .json</button>
+        </div>
       </div>
     </section>
   </main>
