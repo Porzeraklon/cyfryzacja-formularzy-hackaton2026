@@ -30,7 +30,7 @@ def validate_pesel(value: str) -> list[str]:
     if control != int(digits[10]):
         errors.append("Nieprawidłowa suma kontrolna PESEL.")
     year, month, day = int(digits[0:2]), int(digits[2:4]), int(digits[4:6])
-    century = {0: 1900, 2: 2000, 4: 2100, 6: 2200, 8: 1800}.get(month // 20)
+    century = {0: 1900, 1: 2000, 2: 2100, 3: 2200, 4: 1800}.get(month // 20)
     if century is None:
         errors.append("Nieprawidłowy miesiąc w numerze PESEL.")
     else:
