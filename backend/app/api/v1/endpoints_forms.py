@@ -1,8 +1,7 @@
 """Endpointy konwersji i walidacji formularzy (działają od razu w core)."""
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from backend.app.core.config import Settings, get_settings
@@ -36,8 +35,9 @@ async def convert_form(
     content = await read_upload_limited(file, settings.MAX_FILE_SIZE_BYTES)
     validated = validate_upload_bytes(file.filename, content, settings)
     pipeline = get_pipeline(settings)
-    return run_conversion(
-        pipeline, settings, validated.filename, validated.content, validated.mime_type
+    # Synchroniczna inferencja (LLM/OCR) w threadpoolu - nie blokuje event loop.
+    return await run_in_threadpool(
+        run_conversion, pipeline, settings, validated.filename, validated.content, validated.mime_type
     )
 
 
@@ -58,8 +58,8 @@ async def convert_batch(
         try:
             content = await read_upload_limited(upload, settings.MAX_FILE_SIZE_BYTES)
             validated = validate_upload_bytes(filename, content, settings)
-            conversion = run_conversion(
-                pipeline, settings, validated.filename, validated.content, validated.mime_type
+            conversion = await run_in_threadpool(
+                run_conversion, pipeline, settings, validated.filename, validated.content, validated.mime_type
             )
             results.append(
                 BatchItemResult(
