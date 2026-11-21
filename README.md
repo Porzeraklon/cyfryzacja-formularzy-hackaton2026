@@ -1,121 +1,273 @@
 # COI Form Digitizer — Cyfryzacja formularzy (Wyzwanie COI)
 
-Szkielet `core` (branch `main`) rozwiązania konkursowego: lokalny pipeline AI/OCR zamieniający
-formularze urzędowe (PDF, DOC/DOCX, ODS/XLSX, JPG/PNG) w ustrukturyzowany JSON e-Usługi COI
-oraz webowy wizualizator gotowej e-Usługi. **100% offline**, wyłącznie licencje permisywne,
-przetwarzanie ulotne (RAM-only), Docker non-root.
+Aplikacja zamieniająca urzędowe formularze źródłowe (**PDF, DOC/DOCX, ODS/XLSX, JPG/JPEG/JPE, PNG**)
+w ustrukturyzowaną e-Uługę COI:
 
-Szkielet jest punktem wyjścia dla **2-osobowego zespołu** pracującego równolegle na rozłącznych
-zbiorach plików (zero konfliktów merge) — patrz [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+1. **Ingestion** — parsowanie wieloformatowe i lokalny OCR (RapidOCR, modele ONNX wewnątrz wheela),
+   wyłącznie w RAM (`BytesIO`, zero zapisów plików użytkownika na dysk).
+2. **Ekstrakcja AI** — lokalny LLM (llama.cpp + wagi GGUF) rozpoznaje strony tematyczne, sekcje,
+   etykiety, typy kontrolek i kolumny tabel powtarzalnych → `FormDocumentSchema`.
+3. **Mapowanie COI** — słowniki urzędowe, sekcje standardowe (dane wnioskodawcy, zgody),
+   wnioskowanie flows warunkowych, walidatory (PESEL, NIP, REGON, kod pocztowy, e-mail, ePUAP…).
+4. **Eksport i wizualizacja** — `FormDefinition` w oficjalnym formacie COI + webowy wizualizator
+   e-Uługi (czysty vanilla HTML/CSS/JS, zero frameworków i bundlerów).
 
-## Szybki start (Docker — zalecane)
+Domyślnie **100% offline** (`LLM_BACKEND=local`): zero wywołań zewnętrznych API w runtime.
+Opcjonalny tryb `LLM_BACKEND=api` podpina duży model postawiony na serwerach urzędu
+(endpoint OpenAI-compatible, np. vLLM) — patrz [Konfiguracja](#3-konfiguracja).
+Wyłącznie licencje permisywne (MIT/Apache-2.0/BSD/ISC/PSF/MPL-2.0), Docker non-root.
+
+---
+
+## 1. Budowanie obrazu Docker
+
+Wymagania: Docker z pluginem `compose`. Obraz buduje się z `Dockerfile` w katalogu głównym:
 
 ```bash
-cp .env.example .env          # uzupełnij JWT_SECRET_KEY w produkcji!
-docker compose up --build
-# GUI + API: http://localhost:8000
-# Swagger:   http://localhost:8000/docs
+# wariant zalecany (compose nadaje jawny tag coi-form-digitizer:0.1.0)
+docker compose build
+
+# albo ręcznie, z jawnym tagiem (zakaz :latest)
+docker build -t coi-form-digitizer:0.1.0 .
 ```
 
-Obraz: oficjalny `python:3.14-slim` (jawny tag, zero `:latest`), użytkownik non-root `uid=10001`,
-`read_only` + tmpfs, tylko port 8000. Sekrety i konfiguracja wyłącznie w runtime (`.env`).
+Właściwości obrazu (NFR konkursowe):
 
-## Szybki start (lokalnie, bez Dockera)
+- baza `python:3.14-slim` — **jawny tag wersji**, zero `:latest`,
+- użytkownik **non-root `uid=10001`**, `read_only` + tmpfs `/tmp`, `cap_drop: ALL`,
+  `no-new-privileges:true` (compose),
+- **sekrety i konfiguracja wyłącznie w runtime** (ENV/`.env`) — nic na etapie build,
+- `HEALTHCHECK` odpytuje `GET /api/v1/health` (interval 30 s, timeout 5 s),
+- eksponowany wyłącznie port **8000**.
 
-Wymagany Python **3.14** (produkcyjnie; lokalnie do developmentu wystarczy 3.13+):
+> **Uwaga:** obraz instaluje zależności **core** (lekki, bez modeli AI) — pełni działają w nim
+> GUI, wszystkie endpointy API i realistyczny **mock pipeline**. Realny pipeline AI wymaga
+> extras `[ai,llm]` — najprościej uruchomić go lokalnie (sekcja 2B). Aby zbudować obraz z realnym
+> pipeline, zmień w `Dockerfile` linię `pip install --no-cache-dir .` na
+> `pip install --no-cache-dir ".[ai,llm,llm-api]"` (uwaga: `llama-cpp-python` kompiluje się
+> ze źródeł — wymaga narzędzi buildowych w obrazie).
+
+## 2. Uruchomienie aplikacji
+
+### A. Docker (GUI + API + mock pipeline — od razu, bez modeli)
+
+```bash
+cp .env.example .env        # w produkcji ustaw silny JWT_SECRET_KEY!
+docker compose up --build
+```
+
+- GUI (Import → JSON i słowniki → Wizualizator e-Uługi): **http://localhost:8000**
+- Swagger (interaktywna dokumentacja API): **http://localhost:8000/docs**
+- Health: **http://localhost:8000/api/v1/health**
+
+Wolumeny: `./data:/app/data:ro` (baza słowników COI) oraz `models_data:/app/models:ro`
+(katalog na lokalne wagi AI — pusty w trybie mock).
+
+### B. Lokalnie z realnym pipeline AI (tryb konkursowy, 100% offline)
+
+Wymagany Python **3.13+** (host deweloperski 3.13; obraz Dockera celuje w 3.14):
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"        # core + testy (lekko, bez modeli AI)
-# Branch 1 dodatkowo: pip install -e ".[ai,llm]"
-uvicorn backend.app.main:app --reload --port 8000
+pip install -e ".[ai,llm,llm-api,dev]"   # parsery + OCR + lokalny LLM + klient api + testy
 ```
 
-## Testy
+Wagi modeli (pobierane **ręcznie, poza runtime** — aplikacja nie sięga do sieci):
+
+- **OCR**: RapidOCR ma modele ONNX wewnątrz wheela — nic nie pobierasz.
+- **LLM**: umieść plik GGUF w katalogu `MODELS_DIR` (domyślnie `models/`), np.
+  `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (repozytorium `unsloth/Qwen3-4B-Instruct-2507-GGUF`,
+  licencja Apache-2.0). Wybierany jest pierwszy plik `*.gguf` (preferowane nazwy z `qwen3-4b`).
+
+Konfiguracja `.env` dla realnego pipeline offline:
+
+```dotenv
+USE_MOCK_PIPELINE=false
+LLM_BACKEND=local
+```
+
+Start:
 
 ```bash
-pytest                        # walidacja plików, kontrakty API, polityka licencji
+uvicorn backend.app.main:app --port 8000
+# GUI: http://localhost:8000   Swagger: http://localhost:8000/docs
 ```
 
-- `test_file_security.py` — MIME magic bytes, nazwa ≤250 znaków, znaki zakazane, limit rozmiaru, RAM-only.
-- `test_api_contracts.py` — wszystkie endpointy (convert, batch, validate-json/field, dictionaries, JWT).
-- `test_licenses.py` — **oblewa, gdy wykryje GPL/AGPL/LGPL** wśród zainstalowanych pakietów (`pip-licenses`).
+Brak wag GGUF albo bibliotek extras → `/health` raportuje `llm=missing` (`status: degraded`),
+a `convert` zwraca **503 `PIPELINE_NOT_READY`** z instrukcją naprawy (bez cichego fallbacku).
 
-## Zmienne środowiskowe (runtime)
+### C. Opcjonalnie: duży LLM na endpointcie OpenAI-compatible (`LLM_BACKEND=api`)
+
+Gdy urząd dysponuje własnym serwerem modelu (vLLM, llama.cpp server…), aplikacja może zamiast
+lokalnego GGUF wołać ten endpoint — **wyłącznie wskazany adres**, bez chmury publicznej:
+
+```dotenv
+USE_MOCK_PIPELINE=false
+LLM_BACKEND=api
+LLM_API_URL=http://llm-host:8000/v1     # albo pełny URL .../chat/completions
+LLM_MODEL=qwen2.5-72b-instruct
+LLM_API_KEY=sekret-tylko-w-runtime      # opcjonalny; nagłówek Bearer tylko gdy niepusty
+LLM_TIMEOUT_SECONDS=600
+LLM_RESPONSE_FORMAT=json_schema         # json_schema | json_object | none
+```
+
+Zasady trybu `api`:
+
+- klient **nie podąża za przekierowaniami** i ignoruje `HTTP(S)_PROXY` (`trust_env=False`) —
+  ruch nie wychodzi poza wskazany endpoint,
+- błąd endpointu (timeout, HTTP 5xx, nie-JSON, pusta odpowiedź) = **twarde 503**, bez fallbacku
+  na `local`; klucz API jest redagowany (`***`) w komunikatach błędów,
+- `ready()` sprawdza wyłącznie konfigurację (nie osiągalność) — `/health` nie wykonuje zapytań
+  sieciowych (timeout HEALTHCHECK Dockera to 5 s),
+- bez `max_tokens` — o limicie wyjścia decyduje serwer/model; `json_schema` wymusza strukturę
+  odpowiedzi (strict structured output), `json_object` gwarantuje tylko poprawny JSON.
+
+Szczegóły: [docs/llm-backend-switch.md](docs/llm-backend-switch.md).
+
+## 3. Konfiguracja
+
+Cała konfiguracja przez **zmienne środowiskowe** (runtime) lub plik `.env` (gitignore;
+wzorzec: `.env.example`). Sekrety nigdy nie trafiają do obrazu Dockera ani repozytorium.
 
 | Zmienna | Domyślnie | Opis |
 |---|---|---|
 | `ENV` | `development` | `development` aktywuje `/auth/dev-token`; `production` go wyłącza |
+| `USE_MOCK_PIPELINE` | `true` | `false` = realny pipeline AI (OCR + LLM + mapowanie COI) |
+| `MODELS_DIR` | `models` | katalog lokalnych wag GGUF (wolumen; OCR nie wymaga wag) |
+| `DICTIONARIES_DIR` | `data/dictionaries` | lokalna baza słowników COI |
+| `LLM_BACKEND` | `local` | `local` = llama.cpp + GGUF (offline); `api` = endpoint OpenAI-compatible |
+| `LLM_API_URL` | — | bazowy URL endpointu (`/chat/completions` dopisywane automatycznie) |
+| `LLM_API_KEY` | — | klucz Bearer (SecretStr; redagowany w błędach, niewidoczny w repr) |
+| `LLM_MODEL` | — | nazwa modelu na endpointcie (wymagana w trybie `api`) |
+| `LLM_TIMEOUT_SECONDS` | `600` | timeout żądania do endpointu (połączenie: 10 s) |
+| `LLM_RESPONSE_FORMAT` | `json_object` | `json_schema` (strict, zalecane) / `json_object` / `none` |
 | `MAX_FILE_SIZE_BYTES` | `20971520` | limit rozmiaru pojedynczego pliku (20 MB) |
 | `MAX_BATCH_FILES` | `20` | limit plików w `convert-batch` |
 | `JWT_AUTH_ENABLED` | `false` | `true` = wymagany Bearer JWT na endpointach forms/dictionaries |
-| `JWT_SECRET_KEY` | dev placeholder | **sekret wyłącznie z runtime ENV**, silny w produkcji |
+| `JWT_SECRET_KEY` | dev placeholder | **silny sekret wyłącznie z runtime ENV w produkcji** |
 | `JWT_ALGORITHM` / `JWT_EXPIRE_MINUTES` | `HS256` / `60` | parametry tokenu |
-| `USE_MOCK_PIPELINE` | `true` | `false` podpina realny pipeline Brancha 1 |
-| `MODELS_DIR` | `models` | katalog lokalnych wag AI/OCR (wolumen, offline) |
-| `DICTIONARIES_DIR` | `data/dictionaries` | lokalna baza słowników COI |
-| `CORS_ORIGINS` | localhost:8000 | lista originów po przecinku |
+| `CORS_ORIGINS` | localhost:8000 | dozwolone originy — **w `.env` tablica JSON** (patrz niżej) |
+| `API_V1_PREFIX` | `/api/v1` | prefiks wszystkich endpointów API |
 
-## REST API v1 (wszystko działa od razu w `core`)
+**Pułapka `CORS_ORIGINS`:** pydantic-settings dekoduje pola listowe z `.env` jako JSON
+*przed* walidatorami — zapis po przecinku wywala start aplikacji. W `.env` używaj tablicy:
+
+```dotenv
+CORS_ORIGINS=["http://localhost:8000","http://127.0.0.1:8000"]
+```
+
+(Wartość po przecinku działa tylko jako prawdziwa zmienna środowiskowa, np. `docker run -e`.)
+
+Dozwolone rozszerzenia plików: `.pdf .doc .docx .ods .xlsx .jpg .jpeg .jpe .png`
+(weryfikacja: nazwa ≤250 znaków, znaki zakazane, rozmiar, **MIME po magic bytes**, nie po rozszerzeniu).
+
+## 4. REST API
+
+Bazowy prefiks: **`/api/v1`**. Interaktywna dokumentacja (Swagger): `/docs`.
+Autoryzacja: gdy `JWT_AUTH_ENABLED=true`, endpointy `forms/*` i `dictionaries/*` wymagają
+nagłówka `Authorization: Bearer <JWT>` (token testowy: `POST /auth/dev-token` w `ENV=development`).
 
 | Metoda | Ścieżka | Opis |
 |---|---|---|
-| GET | `/api/v1/health` | status, wersja, tryb `mock`/`real`, status modeli |
-| GET | `/api/v1/config` | publiczna konfiguracja dla frontendu |
-| POST | `/api/v1/auth/dev-token` | testowy JWT (tylko `ENV=development`) |
-| POST | `/api/v1/forms/convert` | pojedynczy plik → JSON COI (pełna walidacja FR-05..08) |
-| POST | `/api/v1/forms/convert-batch` | wiele plików → wyniki per plik + podsumowanie |
-| POST | `/api/v1/forms/validate-json` | schemat COI + spójność flows/słowników |
-| POST | `/api/v1/forms/validate-field` | **prawdziwa** walidacja PESEL/telefon/kod/NIP/REGON |
-| GET | `/api/v1/dictionaries` | lista słowników COI |
-| GET | `/api/v1/dictionaries/{id}` | pozycje słownika |
+| GET | `/health` | status `ok`/`degraded`, wersja, tryb `mock`/`real`, status modeli (`ocr`, `llm`: `ready`/`missing`) |
+| GET | `/config` | publiczna konfiguracja dla frontendu (rozszerzenia, limity, JWT) |
+| POST | `/auth/dev-token` | testowy JWT — wyłącznie `ENV=development` (inaczej 403) |
+| POST | `/forms/convert` | multipart `file` → pełna konwersja: `FormDocumentSchema` + `FormDefinition` |
+| POST | `/forms/convert-batch` | multipart `files` (≤ `MAX_BATCH_FILES`) → wynik per plik + podsumowanie |
+| POST | `/forms/validate-json` | walidacja JSON względem schematu COI + spójność flows/słowników |
+| POST | `/forms/export-formdefinition` | `FormDocumentSchema` → oficjalny `FormDefinition` COI + notatki |
+| POST | `/forms/validate-field` | walidacja pojedynczej wartości (PESEL, NIP, REGON, ZIP_CODE, EMAIL, EPUAP, ADE…) |
+| GET | `/dictionaries` | lista lokalnych słowników COI |
+| GET | `/dictionaries/{id}` | pozycje słownika (404 `NOT_FOUND` dla nieznanego id) |
 
-Mock `convert` zwraca bogaty wniosek: **3 strony tematyczne**, zmapowane słowniki
-(województwa, rodzaj dokumentu, płeć), **1 zaproponowany nowy słownik**, sekcję warunkową
-(`case_type = "inna"` → pokaż `sec_case_other` + wymagaj opisu) oraz walidacje PESEL i telefonu.
-Frontend (zakładki: Import → JSON i słowniki → Wizualizacja e-Usługi) działa z tym mockiem end-to-end.
+### Odpowiedź `convert`
 
-Przykład:
+```jsonc
+{
+  "status": "success",
+  "form": {                    // FormDocumentSchema: metadata, pages[].sections[].fields[],
+    "metadata": { "form_id": "...", "title": "...", "generated_at": "..." },
+    "pages": [ /* strony TEMATYCZNE (nie fizyczne strony PDF): sekcje, pola,
+                  options, repeatable_group (kolumny w fields), help_text */ ]
+  },
+  "form_definition": { /* eksport w oficjalnym formacie COI (tabs, questions, dictionaries) */ },
+  "processing": {
+    "filename": "wniosek.pdf", "mime_type": "application/pdf", "size_bytes": 12345,
+    "processing_time_ms": 42000.0, "pipeline_mode": "real", "pages_count": 4, "fields_count": 66
+  },
+  "warnings": [ /* np. propozycje nowych słowników, ograniczenia mapowania */ ]
+}
+```
+
+### Błędy — jednolity format
+
+```json
+{ "error": { "code": "PIPELINE_NOT_READY", "message": "...", "details": { } } }
+```
+
+| HTTP | Kod | Kiedy |
+|---|---|---|
+| 400 | `FILE_VALIDATION_ERROR` | zła nazwa/rozmiar/MIME pliku lub niepoprawny JSON formularza |
+| 400 | `BATCH_TOO_LARGE` | batch przekracza `MAX_BATCH_FILES` |
+| 401 | `AUTHENTICATION_REQUIRED` | brak/niepoprawny JWT (gdy auth włączony) |
+| 403 | `FORBIDDEN` | np. `dev-token` poza `ENV=development` |
+| 404 | `NOT_FOUND` | nieznany słownik |
+| 422 | `REQUEST_VALIDATION_ERROR` | nieprawidłowe parametry żądania |
+| 503 | `PIPELINE_NOT_READY` | brak wag/bibliotek AI, błąd endpointu LLM, zły JSON z modelu |
+
+### Przykłady
 
 ```bash
+# konwersja pliku (realny pipeline: USE_MOCK_PIPELINE=false + wagi w MODELS_DIR)
 curl -F "file=@wniosek.pdf" http://localhost:8000/api/v1/forms/convert
+
+# walidacja PESEL
 curl -X POST http://localhost:8000/api/v1/forms/validate-field \
   -H "Content-Type: application/json" \
   -d '{"value":"44051401458","rules":{"custom_validator":"PESEL"}}'
+
+# sprawdzenie stanu aplikacji
+curl http://localhost:8000/api/v1/health
 ```
 
-## Workflow git dla 2 branchy
+---
+
+## Testy i jakość
 
 ```bash
-# start: oba branche z tego samego commita main
-git checkout -b feat/backend-ai-pipeline    # Osoba 1
-git checkout -b feat/frontend-and-visualizer # Osoba 2 (z main!)
+pytest          # 124 testy: bezpieczeństwo plików, kontrakty API, backend LLM, licencje
+ruff check backend/ && ruff format --check backend/
 ```
 
-| | Branch 1 `feat/backend-ai-pipeline` | Branch 2 `feat/frontend-and-visualizer` |
-|---|---|---|
-| **Wyłączna własność** | `backend/app/modules/`, `data/` | `frontend/` |
-| **Zakres** | parsery wieloformatowe, lokalny OCR (RapidOCR/onnxruntime), lokalny LLM (llama-cpp-python), mapowanie i propozycje słowników, wnioskowanie flows, reguły walidacji | import single/batch z postępem i błędami, edytor JSON + inspektor słowników, wizualizator e-Usługi na żywo (flows, słowniki, walidacja PESEL/telefon) |
-| **Przełączenie** | `USE_MOCK_PIPELINE=false` po implementacji | działa od razu przeciw mock API |
+- `test_file_security.py` — MIME magic bytes, nazwa ≤250 znaków, znaki zakazane, limit rozmiaru, RAM-only.
+- `test_api_contracts.py` — wszystkie endpointy (convert, batch, validate-json/field, dictionaries, JWT).
+- `test_llm_backend.py` / `test_extractor_llm.py` — przełącznik backendu, klient api i ekstrakcja:
+  **zero sieci i zero modelu** (`httpx.MockTransport`, fałszywe GGUF).
+- `test_licenses.py` — **oblewa przy GPL/AGPL/LGPL** wśród zainstalowanych pakietów (`pip-licenses`);
+  dual-license wyłącznie przez świadomą allowlistę (obecnie `odfpy` → Apache-2.0).
 
-Pliki wspólne (`schemas/`, `interfaces/`, `api/`, `core/`, `services/`) są zamrożone w `core` —
-zmiany tylko za obopólną zgodą, małym commitem na `main`. Merge: najpierw Branch 1, potem Branch 2
-(rozłączne zbiory plików ⇒ zero konfliktów).
+Testy zakładają neutralne ENV (np. `LLM_BACKEND=local`); przy `.env` z trybem `api` nadpisz:
+`LLM_BACKEND=local LLM_API_URL= LLM_MODEL= pytest`.
 
 ## Polityka licencyjna (NFR)
 
-Dozwolone: MIT, Apache-2.0, BSD-2/3, ISC, PSF, MPL-2.0. **Zakaz GPL/AGPL** — w szczególności
+Dozwolone: MIT, Apache-2.0, BSD-2/3, ISC, PSF, MPL-2.0. **Zakaz GPL/AGPL/LGPL** — w szczególności
 `PyMuPDF`/`fitz` (AGPL). Zamiast tego: `pypdf` (BSD), `pdfplumber` (MIT), `pypdfium2` (Apache/BSD),
 `rapidocr-onnxruntime` + `onnxruntime` (Apache/MIT), `python-docx`/`openpyxl` (MIT),
-`odfpy` (Apache-2.0 z dual), `llama-cpp-python` (MIT). Test licencji blokuje merge przy naruszeniu.
+`odfpy` (Apache-2.0 z dual), `llama-cpp-python` (MIT), `httpx` (BSD).
 
-## Struktura
+## Struktura repozytorium
 
 ```
-backend/app/{core,schemas,interfaces,services,api/v1,modules}   # modules/ = Branch 1
-backend/tests/                                                  # security + kontrakty + licencje
-frontend/                                                       # Branch 2 (SPA, zero bundlera)
-data/{dictionaries,schemas}                                     # Branch 1
-docs/ARCHITECTURE.md                                            # architektura + podział prac
+backend/app/{core,schemas,interfaces,services,api/v1}   # warstwy wspólne (kontrakty, API, security)
+backend/app/modules/{ingestion,ai_extractor,...}        # pipeline AI: parsery, OCR, LLM, mapowanie COI
+backend/tests/                                          # security + kontrakty + LLM + licencje
+frontend/                                               # SPA: import, edytor JSON, wizualizator (vanilla)
+data/{dictionaries,schemas}                             # słowniki COI + schemat docelowy
+docs/ARCHITECTURE.md                                    # architektura i podział prac
+docs/llm-backend-switch.md                              # przełącznik LLM local/api — szczegóły
 Dockerfile / docker-compose.yml / .env.example / pyproject.toml
 ```
+
+Materiały konkursowe (`testowe-formularze/`, `Materiały dla projketu/`) są gitignore —
+nie trafiają do repozytorium.
