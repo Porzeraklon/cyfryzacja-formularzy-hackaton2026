@@ -88,8 +88,9 @@ LLM_TIMEOUT_SECONDS=600
 LLM_RESPONSE_FORMAT=json_object
 ```
 
-Wysyłany payload: `{model, messages, temperature: 0.0, max_tokens: 3072, stream: false}`
-plus opcjonalny `response_format`:
+Wysyłany payload: `{model, messages, temperature: 0.0, stream: false}` plus opcjonalny
+`response_format`. **Bez `max_tokens`** — o limicie wyjścia decyduje serwer/model
+(local: `max_tokens = N_CTX`, bo llama-cpp-python domyślnie ucina do 16 tokenów):
 
 | `LLM_RESPONSE_FORMAT` | Co leci w żądaniu | Kiedy |
 | --- | --- | --- |
@@ -108,9 +109,9 @@ curl -s -F "file=@wniosek.pdf" localhost:8000/api/v1/forms/convert | jq '.proces
 
 ### Trzy rzeczy, które ugryzą na prawdziwym modelu
 
-1. **`max_tokens = 3072` jest sztywne** (`MAX_OUTPUT_TOKENS`). Duża paczka pól może się uciąć
-   → niepoprawny JSON → 503. Chunking po 9000 znaków to łagodzi, ale przy gęstych formularzach
-   to pierwszy podejrzany.
+1. **Limit wyjścia zależy od serwera/modelu** (nie wysyłamy `max_tokens`). Duża paczka pól
+   może się uciąć → niepoprawny JSON → 503. Chunking po 9000 znaków to łagodzi, ale przy
+   gęstych formularzach to pierwszy podejrzany.
 2. **Warianty „thinking” Qwen3** mogą zużyć budżet na rozumowanie i zwrócić puste
    `message.content` (treść w `reasoning_content`, którego nie czytamy) → 503 „pusta odpowiedź”.
    Nie wysyłamy `chat_template_kwargs: {"enable_thinking": false}`, więc należy wybrać wariant
@@ -162,6 +163,6 @@ Niezweryfikowane:
 > Jestem na branchu `feat/llm-backend-switch`. Przełącznik LLM local/api jest
 > zaimplementowany i przetestowany (122/122), ale jakość na prawdziwym modelu niezweryfikowana.
 > Chcę postawić endpoint OpenAI-compatible z Qwen i przegnać przez niego `testowe-formularze/`.
-> Zacznij od `pytest` i `/health`, potem skonfiguruj `.env` na `LLM_BACKEND=api`. Uwaga na sztywne
-> `max_tokens=3072`, warianty thinking Qwen3 i kontekst serwera. Nie ruszaj dokumentacji NFR
-> ani `frontend/`. Szczegóły: `docs/llm-backend-switch.md`.
+> Zacznij od `pytest` i `/health`, potem skonfiguruj `.env` na `LLM_BACKEND=api`. Uwaga na
+> warianty thinking Qwen3 i kontekst serwera (sztywny limit `max_tokens` usunięty — decyduje
+> serwer). Nie ruszaj dokumentacji NFR ani `frontend/`. Szczegóły: `docs/llm-backend-switch.md`.

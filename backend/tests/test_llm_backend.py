@@ -13,7 +13,6 @@ import pytest
 from backend.app.core.config import Settings
 from backend.app.core.exceptions import PipelineNotReadyError
 from backend.app.modules.ai_extractor.llm_backend import (
-    MAX_OUTPUT_TOKENS,
     HttpApiBackend,
     LocalLlamaBackend,
     build_llm_backend,
@@ -58,7 +57,7 @@ class TestHttpApiBackend:
         assert payload["model"] == "duzy-model"
         assert payload["messages"] == MESSAGES
         assert payload["temperature"] == 0.0
-        assert payload["max_tokens"] == MAX_OUTPUT_TOKENS
+        assert "max_tokens" not in payload
         assert payload["stream"] is False
         assert payload["response_format"] == {"type": "json_object"}
 

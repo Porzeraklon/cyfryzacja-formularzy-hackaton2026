@@ -17,7 +17,6 @@ from typing import Any, Protocol
 from backend.app.core.config import Settings
 from backend.app.core.exceptions import PipelineNotReadyError
 
-MAX_OUTPUT_TOKENS = 3072
 N_CTX = 8192
 _CONNECT_TIMEOUT_SECONDS = 10.0
 _ERROR_BODY_LIMIT = 300
@@ -125,7 +124,8 @@ class LocalLlamaBackend:
                 messages=messages,
                 response_format={"type": "json_object", "schema": json_schema},
                 temperature=0.0,
-                max_tokens=MAX_OUTPUT_TOKENS,
+                # llama-cpp-python domyślnie ucina do 16 tokenów — pełny budżet kontekstu.
+                max_tokens=N_CTX,
             )
         return _content_from_response(response, model_path.name)
 
@@ -190,7 +190,6 @@ class HttpApiBackend:
             "model": self._model,
             "messages": messages,
             "temperature": 0.0,
-            "max_tokens": MAX_OUTPUT_TOKENS,
             "stream": False,
         }
         response_format = self._response_format_payload(json_schema)
