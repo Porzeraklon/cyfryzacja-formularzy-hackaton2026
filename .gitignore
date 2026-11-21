@@ -19,5 +19,6 @@ node_modules/
 
 # Materiały konkursowe (referencje, nie kod projektu) — nigdy nie commitowane
 Materiały dla projketu/
+testowe-formularze/
 # Lokalny stan agenta (plany, sesje)
 .qwen/
