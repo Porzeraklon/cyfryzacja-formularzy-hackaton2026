@@ -143,6 +143,61 @@ def _ods_repeat(element: Any, attribute: str) -> int:
         return 1
 
 
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+_W_P = f"{_W_NS}p"
+_W_T = f"{_W_NS}t"
+_W_TAB = f"{_W_NS}tab"
+_W_BR = f"{_W_NS}br"
+_W_CR = f"{_W_NS}cr"
+_TEXT_TAGS = frozenset({_W_T, _W_TAB, _W_BR, _W_CR})
+
+
+def _under_fallback(node: Any) -> bool:
+    parent = node.getparent()
+    while parent is not None:
+        if parent.tag == _MC_FALLBACK:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def _nearest_paragraph(node: Any) -> Any:
+    parent = node.getparent()
+    while parent is not None and parent.tag != _W_P:
+        parent = parent.getparent()
+    return parent
+
+
+def _docx_text(element: Any) -> str:
+    """Tekst akapitu/komórki wraz z zawartością text-boxów (w:txbxContent).
+
+    Formularze COI bywają złożone wyłącznie z text-boxów (w:drawing/mc:AlternateContent),
+    których python-docx Paragraph.text nie sięga. Pomijamy mc:Fallback — duplikuje tekst
+    z mc:Choice. Każdy w:p (także zagnieżdżony w text-boxie) staje się osobną linią.
+    """
+    lines: list[str] = []
+    for paragraph in element.iter(_W_P):
+        if _under_fallback(paragraph):
+            continue
+        parts: list[str] = []
+        for node in paragraph.iter():
+            if node.tag not in _TEXT_TAGS:
+                continue
+            if _under_fallback(node) or _nearest_paragraph(node) is not paragraph:
+                continue
+            if node.tag == _W_T:
+                parts.append(node.text or "")
+            elif node.tag == _W_TAB:
+                parts.append("\t")
+            else:
+                parts.append("\n")
+        line = "".join(parts).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 class MultiFormatParser:
     """Implementacja protokołu DocumentParser."""
 
@@ -232,7 +287,6 @@ class MultiFormatParser:
     def _parse_docx(self, content: bytes) -> _ParseResult:
         from docx import Document
         from docx.table import Table
-        from docx.text.paragraph import Paragraph
 
         try:
             document = Document(io.BytesIO(content))
@@ -240,9 +294,11 @@ class MultiFormatParser:
             tables: list[list[list[str]]] = []
             for child in document.element.body.iterchildren():
                 if child.tag.endswith("}p"):
-                    lines.append(Paragraph(child, document).text)
+                    lines.append(_docx_text(child))
                 elif child.tag.endswith("}tbl"):
-                    rows = [[cell.text for cell in row.cells] for row in Table(child, document).rows]
+                    rows = [
+                        [_docx_text(cell._tc) for cell in row.cells] for row in Table(child, document).rows
+                    ]
                     tables.append(rows)
                     lines.extend(" | ".join(row) for row in rows)
         except Exception as exc:
