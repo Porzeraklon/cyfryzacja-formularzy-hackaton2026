@@ -241,7 +241,7 @@ curl http://localhost:8000/api/v1/health
 ## Testy i jakość
 
 ```bash
-pytest          #  testów: bezpieczeństwo plików, kontrakty API, walidatory, reguły 1–12, backend LLM, licencje
+pytest          # 166 testów: bezpieczeństwo plików, kontrakty API, walidatory, reguły 1–12, backend LLM, licencje
 ruff check backend/ && ruff format --check backend/
 ```
 
