@@ -45,7 +45,9 @@ def iter_input_fields(fd: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]
     """(tytuł zakładki, pole wejściowe) dla wszystkich pól zbierających dane."""
     for tab in fd.get("tabs", []):
         for question in tab.get("questions", []):
-            for child in question.get("field", {}).get("repetingSectionGrid") or []:
+            section = question.get("field", {})
+            grid = section.get("repetingSectionGrid") or section.get("repeatingSectionGrid") or []
+            for child in grid:
                 item = child.get("field") or {}
                 if item.get("type") in INPUT_TYPES:
                     yield tab.get("title", ""), item

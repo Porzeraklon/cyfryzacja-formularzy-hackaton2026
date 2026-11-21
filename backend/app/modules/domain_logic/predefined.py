@@ -483,13 +483,13 @@ def contact_sections() -> list[SectionDefinition]:
             ),
             fields=[
                 _field(
-                    "telefon",
+                    "numer_telefonu",
                     "Numer telefonu",
                     initial_value="MLPZ.phoneNumber",
                     default_value_type="EXTERNAL_SYSTEM",
                 ),
                 _field(
-                    "email",
+                    "adres_e_mail",
                     "Adres e-mail",
                     validator=CustomValidator.EMAIL,
                     initial_value="MLPZ.email",
@@ -503,7 +503,7 @@ def contact_sections() -> list[SectionDefinition]:
             order=2,
             fields=[
                 _field(
-                    "zgody_oswiadczenia",
+                    "zgoda",
                     "Zgoda",
                     FieldType.CONSENT_SECTION,
                     required=True,

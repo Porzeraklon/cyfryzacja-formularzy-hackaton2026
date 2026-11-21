@@ -78,7 +78,7 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
             # „Wniosek o stwierdzenie nadpłaty podatku” (materiały konkursowe).
             PageDefinition(
                 page_id="page_sprawa",
-                title="Nadpłata i deklaracja",
+                title="Informacje o nadpłacie",
                 order=1,
                 description="Informacje o nadpłacie, sposób jej rozliczenia i korekta deklaracji.",
                 sections=[
@@ -87,7 +87,7 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                         title="Informacje o nadpłacie",
                         order=1,
                         fields=[
-                            _field("podatek", "Podatek, którego dotyczy nadpłata", required=True),
+                            _field("podatek_ktorego_dotyczy_nadplata", "Podatek, którego dotyczy nadpłata", required=True),
                             _field(
                                 "kwota",
                                 "Kwota",
@@ -96,19 +96,14 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                                 placeholder="Kwota w złotych, np. 120,50",
                             ),
                             _field(
-                                "uzasadnienie_info",
-                                "",
-                                FieldType.TEXT_BLOCK,
-                                help_text=(
-                                    "Uzasadnij dlaczego Twoim zdaniem powstała nadpłata i z czego wynika "
-                                    "jej wysokość."
-                                ),
-                            ),
-                            _field(
                                 "uzasadnienie",
                                 "Uzasadnienie",
                                 FieldType.TEXTAREA,
                                 required=True,
+                                help_text=(
+                                    "Uzasadnij dlaczego Twoim zdaniem powstała nadpłata i z czego wynika "
+                                    "jej wysokość."
+                                ),
                                 validation_rules=ValidationRules(max_length=8000),
                             ),
                         ],
@@ -119,7 +114,7 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                         order=2,
                         fields=[
                             _field(
-                                "co_z_nadplata",
+                                "wybierz_co_mamy_zrobic_z_nadplata",
                                 "Wybierz, co mamy zrobić z nadpłatą",
                                 FieldType.RADIO,
                                 required=True,
@@ -147,7 +142,10 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
                                 ),
                             ),
                             _field(
-                                "plik_deklaracji", "Plik deklaracji podatkowej", FieldType.FILE, required=True
+                                "plik_deklaracji_podatkowej",
+                                "Plik deklaracji podatkowej",
+                                FieldType.FILE,
+                                required=True,
                             ),
                         ],
                     ),
@@ -157,8 +155,8 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
         # Stany dynamiczne z wizualizacji: pola „Nazwa podatku” / „Numer rachunku” zależne od
         # wyboru w „Wybierz, co mamy zrobić z nadpłatą” (warunek jsonata SHOW).
         conditional_flows=[
-            _show("co_z_nadplata", _ZALICZYC, "nazwa_podatku"),
-            _show("co_z_nadplata", _ZWROT, "numer_rachunku"),
+            _show("wybierz_co_mamy_zrobic_z_nadplata", _ZALICZYC, "nazwa_podatku"),
+            _show("wybierz_co_mamy_zrobic_z_nadplata", _ZWROT, "numer_rachunku"),
         ],
     )
     return DomainLogicEnricher(get_settings().DICTIONARIES_DIR).enrich(raw)

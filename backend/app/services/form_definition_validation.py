@@ -192,14 +192,18 @@ def _schema_issues(raw: dict[str, Any]) -> list[FormDefinitionIssue]:
     try:
         FormDefinition.model_validate(raw)
     except ValidationError as exc:
+        # Oficjalny JSON Schema nie zabrania dodatkowych kluczy, a referencyjne konfiguracje COI
+        # zawierają np. multiLevelTree, minItemRows czy validation: {} - to nie są błędy importu.
+        # Klucze spoza modelu pomijamy, pozostałe rozbieżności typów zgłaszamy jako ostrzeżenia.
         return [
             FormDefinitionIssue(
-                level="error",
+                level="warn",
                 path=".".join(str(part) for part in err["loc"]),
                 rule="Schemat JSON",
-                message=f"Niezgodność z oficjalnym schematem FormDefinition: {err['msg']}.",
+                message=f"Niezgodność z modelem FormDefinition: {err['msg']}.",
             )
             for err in exc.errors()
+            if err["type"] != "extra_forbidden"
         ]
     return []
 
