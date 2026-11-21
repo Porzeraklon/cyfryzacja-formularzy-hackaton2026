@@ -1,11 +1,12 @@
 """Konfiguracja aplikacji - wyłącznie zmienne środowiskowe (runtime, nie build)."""
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -44,7 +45,8 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0)
     LLM_RESPONSE_FORMAT: Literal["json_schema", "json_object", "none"] = "json_object"
 
-    CORS_ORIGINS: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    # NoDecode: akceptujemy zarówno tablicę JSON, jak i listę po przecinku (dekodowanie w walidatorze).
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
     FRONTEND_DIR: Path = REPO_ROOT / "frontend"
 
@@ -52,7 +54,10 @@ class Settings(BaseSettings):
     @classmethod
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [origin.strip() for origin in text.split(",") if origin.strip()]
         return value
 
     @property

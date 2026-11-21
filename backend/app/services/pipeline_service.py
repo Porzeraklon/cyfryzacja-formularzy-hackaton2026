@@ -31,6 +31,7 @@ from backend.app.schemas.form_schema import (
     ValidationRules,
 )
 from backend.app.services.dictionary_service import DictionaryService
+from backend.app.services.form_definition_validation import validate_form_definition
 from backend.app.services.formdefinition_export import convert_formdefinition, iter_fields
 
 _ZALICZYC = "Zaliczyć na poczet przyszłego zobowiązania podatkowego"
@@ -324,6 +325,7 @@ def run_conversion(
     return ConversionResponse(
         form=result.form,
         form_definition=exported["form"],
+        form_definition_issues=validate_form_definition(exported["form"]),
         processing=ProcessingMetadata(
             filename=filename,
             mime_type=mime_type,

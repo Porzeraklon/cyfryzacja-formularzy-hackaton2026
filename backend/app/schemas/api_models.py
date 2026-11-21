@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.app.schemas.form_definition import FormDefinitionIssue
 from backend.app.schemas.form_schema import (
     DictionaryItem,
     FieldType,
@@ -46,6 +47,8 @@ class ConversionResponse(_ApiModel):
     status: Literal["success"] = "success"
     form: FormDocumentSchema
     form_definition: dict[str, Any] | None = None
+    # Uwagi walidatora strukturalnego FormDefinition (reguły 1–12 + Standardy); puste = zgodny.
+    form_definition_issues: list[FormDefinitionIssue] = Field(default_factory=list)
     processing: ProcessingMetadata
     warnings: list[ConversionWarning] = Field(default_factory=list)
 
@@ -54,6 +57,8 @@ class BatchItemResult(_ApiModel):
     filename: str
     status: Literal["success", "error"]
     form: FormDocumentSchema | None = None
+    form_definition: dict[str, Any] | None = None
+    form_definition_issues: list[FormDefinitionIssue] = Field(default_factory=list)
     processing: ProcessingMetadata | None = None
     warnings: list[ConversionWarning] = Field(default_factory=list)
     error: ErrorDetail | None = None
@@ -107,6 +112,16 @@ class FormDefinitionExportRequest(_ApiModel):
 class FormDefinitionExportResponse(_ApiModel):
     form_definition: dict[str, Any]
     notes: list[str] = Field(default_factory=list)
+    issues: list[FormDefinitionIssue] = Field(default_factory=list)
+
+
+class FormDefinitionValidationRequest(_ApiModel):
+    form_definition: dict[str, Any]
+
+
+class FormDefinitionValidationResponse(_ApiModel):
+    valid: bool  # brak uwag poziomu "error"
+    issues: list[FormDefinitionIssue] = Field(default_factory=list)
 
 
 class ValidationCheckRequest(_ApiModel):

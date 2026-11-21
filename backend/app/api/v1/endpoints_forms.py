@@ -15,6 +15,8 @@ from backend.app.schemas.api_models import (
     ErrorDetail,
     FormDefinitionExportRequest,
     FormDefinitionExportResponse,
+    FormDefinitionValidationRequest,
+    FormDefinitionValidationResponse,
     JsonValidationRequest,
     JsonValidationResponse,
     ValidationCheckRequest,
@@ -24,6 +26,7 @@ from backend.app.schemas.form_schema import FormDocumentSchema
 from backend.app.services.dictionary_service import DictionaryService
 from backend.app.services.field_validation import validate_value
 from backend.app.services.form_consistency import validate_form_consistency
+from backend.app.services.form_definition_validation import has_errors, validate_form_definition
 from backend.app.services.formdefinition_export import convert_formdefinition
 from backend.app.services.pipeline_service import get_pipeline, run_conversion
 
@@ -69,6 +72,8 @@ async def convert_batch(
                     filename=validated.filename,
                     status="success",
                     form=conversion.form,
+                    form_definition=conversion.form_definition,
+                    form_definition_issues=conversion.form_definition_issues,
                     processing=conversion.processing,
                     warnings=conversion.warnings,
                 )
@@ -133,7 +138,18 @@ def export_formdefinition(
         service.get_dictionary(dictionary_id) for dictionary_id in sorted(service.known_dictionary_ids())
     ]
     exported = convert_formdefinition(form, known)
-    return FormDefinitionExportResponse(form_definition=exported["form"], notes=exported["notes"])
+    return FormDefinitionExportResponse(
+        form_definition=exported["form"],
+        notes=exported["notes"],
+        issues=validate_form_definition(exported["form"]),
+    )
+
+
+@router.post("/validate-formdefinition", response_model=FormDefinitionValidationResponse)
+def validate_formdefinition(payload: FormDefinitionValidationRequest) -> FormDefinitionValidationResponse:
+    """Walidacja oficjalnego FormDefinition: schemat JSON + reguły 1–12 + zalecenia Standardów."""
+    issues = validate_form_definition(payload.form_definition)
+    return FormDefinitionValidationResponse(valid=not has_errors(issues), issues=issues)
 
 
 @router.post("/validate-field", response_model=ValidationCheckResponse)
