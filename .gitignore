@@ -22,3 +22,7 @@ Materiały dla projketu/
 testowe-formularze/
 # Lokalny stan agenta (plany, sesje)
 .qwen/
+
+# Lokalna kopia materiałów konkursowych (nie commitować)
+materiały/
+materialy/
