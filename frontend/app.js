@@ -86,12 +86,16 @@ function peselErrors(value) {
   const sum = weights.reduce((acc, w, i) => acc + Number(value[i]) * w, 0);
   const errors = [];
   if ((10 - (sum % 10)) % 10 !== Number(value[10])) errors.push("Nieprawidłowa suma kontrolna PESEL.");
-  const month = Number(value.slice(2, 4));
-  const century = { 0: 1900, 2: 2000, 4: 2100, 6: 2200, 8: 1800 }[Math.floor(month / 20)];
-  if (century === undefined) errors.push("Nieprawidłowy miesiąc w numerze PESEL.");
+  // Miesiąc koduje stulecie: 01–12 → 1900, 21–32 → 2000, 41–52 → 2100, 61–72 → 2200, 81–92 → 1800.
+  const encodedMonth = Number(value.slice(2, 4));
+  const century = [1900, 2000, 2100, 2200, 1800][Math.floor(encodedMonth / 20)];
+  const month = encodedMonth % 20;
+  if (century === undefined || month < 1 || month > 12) errors.push("Nieprawidłowy miesiąc w numerze PESEL.");
   else {
-    const date = new Date(century + Number(value.slice(0, 2)), (month % 20) - 1, Number(value.slice(4, 6)));
-    if (Number.isNaN(date.getTime()) || date.getDate() !== Number(value.slice(4, 6))) {
+    const year = century + Number(value.slice(0, 2));
+    const day = Number(value.slice(4, 6));
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
       errors.push("Nieprawidłowa data urodzenia w numerze PESEL.");
     }
   }
