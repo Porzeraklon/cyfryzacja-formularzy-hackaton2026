@@ -136,6 +136,16 @@ def _normalize_doc_text(text: str) -> str:
     return re.sub(r"[\x00-\x08\x0e-\x1f]", "", text).strip()
 
 
+def _pdf_page_tables(page: Any) -> list[list[list[str]]]:
+    """Tabele jednej strony pdfplumber (None -> ""); pomija tabele bez żadnej treści."""
+    tables: list[list[list[str]]] = []
+    for table in page.extract_tables() or []:
+        rows = [["" if cell is None else str(cell) for cell in row] for row in table if row]
+        if any(cell.strip() for row in rows for cell in row):
+            tables.append(rows)
+    return tables
+
+
 def _ods_repeat(element: Any, attribute: str) -> int:
     try:
         return max(1, int(element.getAttribute(attribute) or 1))
@@ -176,14 +186,13 @@ class MultiFormatParser:
         import pdfplumber
 
         pages: list[ParsedPage] = []
+        # PDF zna podział na strony: tabele trafiają do ParsedPage.tables, nie do listy dokumentu.
         tables: list[list[list[str]]] = []
         try:
             with pdfplumber.open(io.BytesIO(content)) as pdf:
                 for number, page in enumerate(pdf.pages, start=1):
                     text = (page.extract_text() or "").strip()
-                    for table in page.extract_tables():
-                        tables.append([["" if cell is None else str(cell) for cell in row] for row in table])
-                    pages.append(ParsedPage(page_number=number, text=text))
+                    pages.append(ParsedPage(page_number=number, text=text, tables=_pdf_page_tables(page)))
         except Exception as exc:
             raise FileValidationError(
                 "FILE_PARSE_ERROR",

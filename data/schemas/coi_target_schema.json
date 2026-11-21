@@ -50,13 +50,39 @@
       "title": "ConditionalFlow",
       "type": "object"
     },
+    "ConsentItem": {
+      "additionalProperties": false,
+      "description": "Pojedyncza zgoda/oświadczenie w polu consent_section.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "ConsentItem",
+      "type": "object"
+    },
     "CustomValidator": {
+      "description": "Walidatory z katalogu COI (Reguły techniczne) + dwa historyczne aliasy.\n\nREQUIRED nie jest tu ujęty - wymagalność opisuje `FieldDefinition.required`.",
       "enum": [
+        "EMAIL",
         "PESEL",
-        "PL_PHONE",
         "NIP",
         "REGON",
-        "POSTAL_CODE"
+        "ZIP_CODE",
+        "EPUAP",
+        "ADE",
+        "SERIAL_NUMBER_ID_CARD",
+        "POSTAL_CODE",
+        "PL_PHONE"
       ],
       "title": "CustomValidator",
       "type": "string"
@@ -222,6 +248,49 @@
           ],
           "default": null,
           "title": "Fields"
+        },
+        "read_only": {
+          "default": false,
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "default_value_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InitialDataSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "default_value_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Value Key"
+        },
+        "consents": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConsentItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consents"
         }
       },
       "required": [
@@ -243,7 +312,10 @@
         "checkbox",
         "textarea",
         "file",
-        "repeatable_group"
+        "repeatable_group",
+        "consent_section",
+        "text_block",
+        "info_section"
       ],
       "title": "FieldType",
       "type": "string"
@@ -304,6 +376,16 @@
       "title": "FormMetadata",
       "type": "object"
     },
+    "InitialDataSource": {
+      "description": "Źródła danych inicjalnych (materiał \"Dane inicjalne\"); w FormDefinition: EXTERNAL_SYSTEM.",
+      "enum": [
+        "PESEL",
+        "PESEL_ADDRESS",
+        "MLPZ"
+      ],
+      "title": "InitialDataSource",
+      "type": "string"
+    },
     "MappedDictionary": {
       "additionalProperties": false,
       "properties": {
@@ -351,6 +433,10 @@
           "title": "Order",
           "type": "integer"
         },
+        "page_type": {
+          "$ref": "#/$defs/PageType",
+          "default": "MAIN"
+        },
         "description": {
           "anyOf": [
             {
@@ -385,6 +471,14 @@
       ],
       "title": "PageDefinition",
       "type": "object"
+    },
+    "PageType": {
+      "enum": [
+        "MAIN",
+        "FINISH"
+      ],
+      "title": "PageType",
+      "type": "string"
     },
     "ProposedDictionary": {
       "additionalProperties": false,
@@ -449,6 +543,18 @@
           ],
           "default": null,
           "title": "Description"
+        },
+        "predefined": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predefined"
         },
         "visibility_rules": {
           "items": {
@@ -614,8 +720,6 @@
     "metadata",
     "pages"
   ],
-  "title": "COI Target Form Schema",
-  "type": "object",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Docelowy schemat JSON e-Uslugi COI (generowany z FormDocumentSchema, Pydantic v2)."
+  "title": "FormDocumentSchema",
+  "type": "object"
 }

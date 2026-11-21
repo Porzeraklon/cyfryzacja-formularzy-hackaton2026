@@ -2,7 +2,7 @@
   "dictionaries": [
     {
       "dictionary_id": "dict_voivodeships",
-      "name": "Województwa",
+      "name": "Województwo",
       "description": "Słownik województw RP (dane inicjalne COI).",
       "items": [
         { "code": "02", "label": "dolnośląskie" },

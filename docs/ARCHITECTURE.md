@@ -65,11 +65,44 @@ Semantyka widoczności (przyjęta przez wizualizator): element z regułami `SHOW
 tylko, gdy co najmniej jedna reguła `SHOW` jest spełniona; reguła `HIDE` ukrywa element, gdy spełniona;
 `REQUIRE`/`OPTIONAL` nadpisują wymaganość; `SET_VALUE` ustawia wartość przy przejściu warunku w stan spełniony.
 
+### 4.1a Rozszerzenia zgodne z materiałami COI
+
+- Typy pól: `consent_section` (z `consents[{description, required}]`), `text_block`, `info_section`;
+  checkbox z `options`/`dictionary_ref` = wielokrotny wybór.
+- Walidatory z katalogu COI: `EMAIL, PESEL, NIP, REGON, ZIP_CODE, EPUAP, ADE, SERIAL_NUMBER_ID_CARD`
+  (`POSTAL_CODE` i `PL_PHONE` tylko dla zgodności wstecz; eksport zapisuje `ZIP_CODE`, `PL_PHONE` pomija).
+- Dane inicjalne: `read_only`, `default_value_type` (`PESEL` / `PESEL_ADDRESS` / `MLPZ`) + `default_value_key`
+  → w FormDefinition `defaultValue: "MLPZ.name"`, `defaultValueType: "EXTERNAL_SYSTEM"`.
+- `PageDefinition.page_type` (`MAIN`/`FINISH`; strona FINISH tylko z `info_section`),
+  `SectionDefinition.predefined` (sekcje ze Standardów: `STD_OFFICE`, `STD_APPLICANT_ROLE`,
+  `STD_APPLICANT_DATA`, `STD_ADDRESS`, `STD_CONTACT`, `STD_CONSENTS`).
+
+### 4.1b Oficjalny `FormDefinition` (eksport)
+
+`schemas/form_definition.py` modeluje oficjalny schemat (`title / tabs[MAIN|FINISH] /
+questions{x,y,rows,cols,field} / flow.links`, klucz `repetingSectionGrid` w pisowni schematu).
+`services/form_definition_export.py` konwertuje format wewnętrzny (UUID v5 deterministyczne,
+`validation` jako tablica nazw, słowniki `dict_*` → `dictionaryName`, zależności → `states` jsonata,
+strona FINISH, `flow.links`). `POST /forms/convert` zwraca `form_definition` + `form_definition_notes`;
+dodatkowo `POST /forms/export-definition` i `POST /forms/validate-definition` (reguły 1–12,
+`services/form_definition_validation.py`).
+
+### 4.1c Słowniki
+
+`data/dictionaries/*.json` (ładowane wszystkie): Województwo, Powiat (380, TERYT), Kraje, Numery kierunkowe,
+Gmina i Miejscowość (podzbiór demonstracyjny). Pełny TERYT generuje offline
+`python -m backend.app.modules.domain_logic.teryt_import` z plików TERC/SIMC GUS pobranych ręcznie.
+
 ### 4.2 `FormPipeline` (Protocol)
 
 Branch 1 implementuje `DocumentParser`, `StructureExtractor`, `DomainEnricher` w `modules/`
 i podpina je przez `RealFormPipeline` (kompozycja już istnieje w core). Przełączenie:
-`USE_MOCK_PIPELINE=false`. Dopóki stuby rzucają `NotImplementedError`, API zwraca `503 PIPELINE_NOT_READY`.
+`USE_MOCK_PIPELINE=false`. Brak modelu GGUF lub opcjonalnych bibliotek `[ai]`/`[llm]` daje `503 PIPELINE_NOT_READY`.
+
+Etapy realnego pipeline: parser (tabele przypisane do stron) → ekstraktor LLM (tabele → `repeatable_group`
+z kolumnami, grupowanie sekcji w strony tematyczne wg Standardów) → `DomainLogicEnricher` (deterministycznie:
+sekcje predefiniowane, walidatory i słowniki po etykietach, propozycje słowników, zgody → `consent_section`,
+zależności dla opcji „inne”, strona FINISH).
 
 ## 5. Bezpieczeństwo (FR-05..FR-09)
 
@@ -85,7 +118,8 @@ i podpina je przez `RealFormPipeline` (kompozycja już istnieje w core). Przeł�
 ## 6. Walidacja współdzielona
 
 `services/field_validation.py` zawiera **prawdziwe** sumy kontrolne PESEL (z walidacją daty),
-NIP, REGON (9/14), format telefonu PL i kodu pocztowego. Endpoint `POST /forms/validate-field`
+NIP, REGON (9/14), seria i numer dowodu osobistego, formaty EMAIL/ZIP_CODE/EPUAP/ADE;
+`validate_by_names()` waliduje wartość wg tablicy `validation` z FormDefinition. Endpoint `POST /forms/validate-field`
 działa od razu — Branch 2 używa go do walidacji na żywo, Branch 1 reużywa funkcji w `domain_logic`.
 `services/form_consistency.py` sprawdza spójność referencji (flows, słowniki, unikalność ID)
 na potrzeby `POST /forms/validate-json`.

@@ -52,16 +52,18 @@ class TestConvert:
         body = response.json()
         assert body["status"] == "success"
         form = FormDocumentSchema.model_validate(body["form"])
-        assert len(form.pages) == 3
+        assert len(form.pages) == 4  # 3 strony MAIN + strona końcowa FINISH
+        assert form.pages[-1].page_type.value == "FINISH"
         assert len(form.dictionaries.mapped_dictionaries) >= 2
         assert len(form.dictionaries.proposed_dictionaries) == 1
         assert form.conditional_flows, "mock musi zawierać przepływy warunkowe"
         fields = {f.field_id: f for p in form.pages for s in p.sections for f in s.fields}
         assert fields["pesel"].validation_rules.custom_validator.value == "PESEL"
-        assert fields["phone"].validation_rules.custom_validator.value == "PL_PHONE"
-        assert fields["postal_code"].validation_rules.custom_validator.value == "POSTAL_CODE"
+        assert fields["email"].validation_rules.custom_validator.value == "EMAIL"
+        assert fields["adres_zamieszkania_kod_pocztowy"].validation_rules.custom_validator.value == "ZIP_CODE"
+        assert body["form_definition"]["tabs"][-1]["type"] == "FINISH"
         assert body["processing"]["pipeline_mode"] == "mock"
-        assert body["processing"]["pages_count"] == 3
+        assert body["processing"]["pages_count"] == 4
         assert body["warnings"][0]["code"] == "MOCK_PIPELINE"
 
     def test_convert_forbidden_filename(self, client):
@@ -193,9 +195,12 @@ class TestDictionaries:
         response = client.get("/api/v1/dictionaries")
         assert response.status_code == 200
         body = response.json()
-        assert body["total"] == 4
         ids = {entry["dictionary_id"] for entry in body["dictionaries"]}
-        assert {"dict_voivodeships", "dict_gender", "dict_document_types", "dict_marital_status"} <= ids
+        assert body["total"] == len(ids)
+        assert {
+            "dict_voivodeships", "dict_districts", "dict_communities", "dict_places", "dict_countries",
+            "dict_dial_codes", "dict_gender", "dict_document_types", "dict_marital_status",
+        } <= ids
 
     def test_dictionary_detail(self, client):
         response = client.get("/api/v1/dictionaries/dict_voivodeships")

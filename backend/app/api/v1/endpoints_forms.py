@@ -13,6 +13,10 @@ from backend.app.schemas.api_models import (
     BatchSummary,
     ConversionResponse,
     ErrorDetail,
+    FormDefinitionExportRequest,
+    FormDefinitionExportResponse,
+    FormDefinitionValidationRequest,
+    FormDefinitionValidationResponse,
     JsonValidationRequest,
     JsonValidationResponse,
     ValidationCheckRequest,
@@ -22,7 +26,8 @@ from backend.app.schemas.form_schema import FormDocumentSchema
 from backend.app.services.dictionary_service import DictionaryService
 from backend.app.services.field_validation import validate_value
 from backend.app.services.form_consistency import validate_form_consistency
-from backend.app.services.pipeline_service import get_pipeline, run_conversion
+from backend.app.services.form_definition_validation import has_errors, validate_form_definition
+from backend.app.services.pipeline_service import build_form_definition, get_pipeline, run_conversion
 
 router = APIRouter(prefix="/forms", tags=["forms"], dependencies=[Depends(require_auth)])
 
@@ -68,6 +73,8 @@ async def convert_batch(
                     form=conversion.form,
                     processing=conversion.processing,
                     warnings=conversion.warnings,
+                    form_definition=conversion.form_definition,
+                    form_definition_notes=conversion.form_definition_notes,
                 )
             )
         except AppError as exc:
@@ -95,9 +102,7 @@ def validate_json(
     except ValidationError as exc:
         return JsonValidationResponse(
             valid=False,
-            schema_errors=[
-                f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()
-            ],
+            schema_errors=_schema_error_messages(exc),
         )
     known_ids = DictionaryService(settings).known_dictionary_ids()
     consistency_errors, warnings = validate_form_consistency(form, known_ids)
@@ -106,6 +111,36 @@ def validate_json(
         consistency_errors=consistency_errors,
         warnings=warnings,
     )
+
+
+def _schema_error_messages(exc: ValidationError) -> list[str]:
+    return [f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()]
+
+
+@router.post("/export-definition", response_model=FormDefinitionExportResponse)
+def export_definition(
+    payload: FormDefinitionExportRequest,
+    settings: Settings = Depends(get_settings),
+) -> FormDefinitionExportResponse:
+    """Wewnętrzny JSON formularza -> oficjalny FormDefinition COI + notatki + wynik walidacji reguł."""
+    try:
+        form = FormDocumentSchema.model_validate(payload.form)
+    except ValidationError as exc:
+        return FormDefinitionExportResponse(valid=False, schema_errors=_schema_error_messages(exc))
+    form_definition, notes = build_form_definition(form, settings)
+    if form_definition is None:
+        return FormDefinitionExportResponse(valid=False, notes=notes)
+    issues = validate_form_definition(form_definition)
+    return FormDefinitionExportResponse(
+        valid=not has_errors(issues), form_definition=form_definition, notes=notes, issues=issues
+    )
+
+
+@router.post("/validate-definition", response_model=FormDefinitionValidationResponse)
+def validate_definition(payload: FormDefinitionValidationRequest) -> FormDefinitionValidationResponse:
+    """Walidacja FormDefinition względem oficjalnego schematu oraz reguł 1–12 i Standardów."""
+    issues = validate_form_definition(payload.form_definition)
+    return FormDefinitionValidationResponse(valid=not has_errors(issues), issues=issues)
 
 
 @router.post("/validate-field", response_model=ValidationCheckResponse)

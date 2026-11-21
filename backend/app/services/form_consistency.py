@@ -1,15 +1,86 @@
 """Walidacja spójności wygenerowanego JSON-a formularza COI (ponad sam schemat).
 
-Sprawdza unikalność identyfikatorów oraz poprawność referencji w przepływach
-warunkowych i słownikach. Używane przez POST /forms/validate-json.
+Sprawdza unikalność identyfikatorów, poprawność referencji w przepływach warunkowych
+i słownikach oraz reguły kontraktu COI (strona FINISH, pola prezentacyjne, sekcje zgód,
+słowniki tylko na polach wyboru, dane inicjalne). Używane przez POST /forms/validate-json.
 """
 
 from backend.app.schemas.form_schema import (
+    CHOICE_FIELD_TYPES,
+    PRESENTATION_FIELD_TYPES,
     ConditionalFlow,
+    FieldDefinition,
+    FieldType,
     FlowAction,
     FormDocumentSchema,
+    PageType,
     TargetType,
 )
+from backend.app.services.form_definition_export import INITIAL_DATA_ATTRIBUTES
+
+# Strona FINISH (reguła 7): wyłącznie pola informacyjne.
+FINISH_ALLOWED_FIELD_TYPES = frozenset({FieldType.INFO_SECTION, FieldType.TEXT_BLOCK})
+
+
+def _iter_fields(fields: list[FieldDefinition]):
+    for field in fields:
+        yield field
+        if field.fields:
+            yield from _iter_fields(field.fields)
+
+
+def _check_contract_rules(form: FormDocumentSchema, errors: list[str], warnings: list[str]) -> None:
+    """Reguły nowego kontraktu COI (Reguły techniczne, Słowniki, Dane inicjalne)."""
+    if not any(page.page_type == PageType.MAIN for page in form.pages):
+        errors.append("Formularz musi mieć co najmniej jedną stronę MAIN (reguła 2).")
+    finish_pages = [page for page in form.pages if page.page_type == PageType.FINISH]
+    if len(finish_pages) > 1:
+        errors.append(f"Formularz może mieć tylko jedną stronę FINISH (jest {len(finish_pages)}).")
+
+    for page in form.pages:
+        for section in page.sections:
+            for field in _iter_fields(section.fields):
+                where = f"pole {field.field_id}"
+                if page.page_type == PageType.FINISH and field.field_type not in FINISH_ALLOWED_FIELD_TYPES:
+                    errors.append(
+                        f"{where}: strona końcowa '{page.page_id}' może zawierać wyłącznie pola "
+                        f"info_section/text_block (jest {field.field_type.value}; reguła 7)."
+                    )
+                if field.field_type == FieldType.CONSENT_SECTION and not field.consents:
+                    errors.append(f"{where}: consent_section musi mieć niepustą listę consents.")
+                if field.field_type in PRESENTATION_FIELD_TYPES and field.required:
+                    warnings.append(
+                        f"{where}: pole prezentacyjne ({field.field_type.value}) nie może być wymagane — "
+                        "required zostanie pominięte."
+                    )
+                if field.dictionary_ref and field.field_type not in CHOICE_FIELD_TYPES:
+                    errors.append(
+                        f"{where}: dictionary_ref '{field.dictionary_ref}' dozwolone tylko na polach "
+                        f"select/radio/checkbox (jest {field.field_type.value})."
+                    )
+                _check_initial_data(field, where, errors, warnings)
+
+
+def _check_initial_data(field: FieldDefinition, where: str, errors: list[str], warnings: list[str]) -> None:
+    if field.default_value_type is None and field.default_value_key:
+        errors.append(f"{where}: default_value_key wymaga ustawienia default_value_type (źródła danych).")
+    elif field.default_value_type is not None and not field.default_value_key:
+        errors.append(
+            f"{where}: default_value_type {field.default_value_type.value} wymaga atrybutu "
+            "(default_value_key)."
+        )
+    elif field.default_value_type is not None and field.default_value_key:
+        source = field.default_value_type.value
+        if field.default_value_key not in INITIAL_DATA_ATTRIBUTES.get(source, ()):
+            warnings.append(
+                f"{where}: źródło danych inicjalnych {source} nie ma atrybutu "
+                f"'{field.default_value_key}' (materiał Dane inicjalne)."
+            )
+        if not field.read_only:
+            warnings.append(
+                f"{where}: pole zasilane danymi inicjalnymi powinno mieć read_only=true "
+                "(eksport ustawi readOnly)."
+            )
 
 
 def validate_form_consistency(
@@ -105,4 +176,5 @@ def validate_form_consistency(
                 f"proposed_dictionaries: słownik '{proposed.proposed_id}' nie ma pozycji."
             )
 
+    _check_contract_rules(form, errors, warnings)
     return errors, warnings

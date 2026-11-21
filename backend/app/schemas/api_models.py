@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.app.schemas.form_definition import FormDefinition, FormDefinitionIssue
 from backend.app.schemas.form_schema import (
     DictionaryItem,
     FieldType,
@@ -47,6 +48,9 @@ class ConversionResponse(_ApiModel):
     form: FormDocumentSchema
     processing: ProcessingMetadata
     warnings: list[ConversionWarning] = Field(default_factory=list)
+    # Ten sam formularz w oficjalnym formacie importu e-Usług COI (None, gdy eksport się nie powiódł).
+    form_definition: FormDefinition | None = None
+    form_definition_notes: list[str] = Field(default_factory=list)
 
 
 class BatchItemResult(_ApiModel):
@@ -55,6 +59,8 @@ class BatchItemResult(_ApiModel):
     form: FormDocumentSchema | None = None
     processing: ProcessingMetadata | None = None
     warnings: list[ConversionWarning] = Field(default_factory=list)
+    form_definition: FormDefinition | None = None
+    form_definition_notes: list[str] = Field(default_factory=list)
     error: ErrorDetail | None = None
 
 
@@ -97,6 +103,30 @@ class JsonValidationResponse(_ApiModel):
     schema_errors: list[str] = Field(default_factory=list)
     consistency_errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class FormDefinitionExportRequest(_ApiModel):
+    """Wewnętrzny JSON formularza (FormDocumentSchema) do eksportu w formacie FormDefinition."""
+
+    form: dict[str, Any]
+
+
+class FormDefinitionExportResponse(_ApiModel):
+    valid: bool
+    form_definition: FormDefinition | None = None
+    notes: list[str] = Field(default_factory=list)
+    issues: list[FormDefinitionIssue] = Field(default_factory=list)
+    # Błędy zgodności wejścia z FormDocumentSchema (wtedy form_definition = None).
+    schema_errors: list[str] = Field(default_factory=list)
+
+
+class FormDefinitionValidationRequest(_ApiModel):
+    form_definition: dict[str, Any]
+
+
+class FormDefinitionValidationResponse(_ApiModel):
+    valid: bool
+    issues: list[FormDefinitionIssue] = Field(default_factory=list)
 
 
 class ValidationCheckRequest(_ApiModel):
