@@ -45,8 +45,9 @@ def _find_gguf(models_dir: Path) -> Path | None:
     return (preferred or files)[0]
 
 
-def _load_llm(model_path: Path) -> Any:
-    key = str(model_path.resolve())
+def _load_llm(model_path: Path, n_threads: int = 0, n_ctx: int = N_CTX) -> Any:
+    """Model ładowany raz na proces (cache) - kolejne żądania nie płacą za wczytanie wag."""
+    key = f"{model_path.resolve()}|{n_threads}|{n_ctx}"
     with _LLM_LOCK:
         if key in _LLM_CACHE:
             return _LLM_CACHE[key]
@@ -59,9 +60,9 @@ def _load_llm(model_path: Path) -> Any:
             ) from exc
         try:
             llm = Llama(
-                model_path=key,
-                n_ctx=N_CTX,
-                n_threads=os.cpu_count() or 4,
+                model_path=str(model_path.resolve()),
+                n_ctx=n_ctx,
+                n_threads=n_threads or os.cpu_count() or 4,
                 n_gpu_layers=0,
                 verbose=False,
             )
@@ -99,8 +100,10 @@ def _chat_completions_url(api_url: str) -> str:
 class LocalLlamaBackend:
     """Lokalny model GGUF przez llama-cpp-python (gramatyka GBNF z response_format)."""
 
-    def __init__(self, models_dir: Path) -> None:
+    def __init__(self, models_dir: Path, *, n_threads: int = 0, n_ctx: int = N_CTX) -> None:
         self._models_dir = Path(models_dir)
+        self._n_threads = n_threads
+        self._n_ctx = n_ctx
 
     @property
     def model_name(self) -> str:
@@ -118,14 +121,14 @@ class LocalLlamaBackend:
                 "Qwen3-4B-Instruct-2507-Q4_K_M.gguf z unsloth/Qwen3-4B-Instruct-2507-GGUF.",
                 {"models_dir": str(self._models_dir)},
             )
-        llm = _load_llm(model_path)
+        llm = _load_llm(model_path, self._n_threads, self._n_ctx)
         with _LLM_LOCK:
             response = llm.create_chat_completion(
                 messages=messages,
                 response_format={"type": "json_object", "schema": json_schema},
                 temperature=0.0,
                 # llama-cpp-python domyślnie ucina do 16 tokenów — pełny budżet kontekstu.
-                max_tokens=N_CTX,
+                max_tokens=self._n_ctx,
             )
         return _content_from_response(response, model_path.name)
 
@@ -244,4 +247,6 @@ def build_llm_backend(settings: Settings) -> LlmBackend:
             timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
             response_format=settings.LLM_RESPONSE_FORMAT,
         )
-    return LocalLlamaBackend(models_dir=settings.MODELS_DIR)
+    return LocalLlamaBackend(
+        models_dir=settings.MODELS_DIR, n_threads=settings.LLM_THREADS, n_ctx=settings.LLM_CTX
+    )

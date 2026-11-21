@@ -112,6 +112,23 @@ class _LlmDocument(BaseModel):
     pages: list[_LlmPage] = Field(min_length=1, max_length=4)
 
 
+_FILL_LINE = re.compile(r"[._…\-–]{4,}|(?:\. ){3,}\.?|(?:_ ){3,}_?")
+_SPACES = re.compile(r"[ \t\u00a0]{2,}")
+_BLANK_LINES = re.compile(r"\n\s*\n(?:\s*\n)+")
+
+
+def compact_text(text: str) -> str:
+    """Skraca tekst przed LLM bez utraty treści: wykropkowania/podkreślenia do ręcznego
+    wypełniania („..........”, „______”) zamienia na krótki znacznik pola „____”, zbija
+    wielokrotne spacje i puste linie. Na CPU czas zależy od liczby tokenów promptu, a formularze
+    papierowe mają setki znaków wykropkowań, które nie niosą informacji poza „tu jest pole”.
+    """
+    text = _FILL_LINE.sub("____", text or "")
+    text = _SPACES.sub(" ", text)
+    text = _BLANK_LINES.sub("\n\n", text)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
 def _slugify(value: str) -> str:
     ascii_value = unicodedata.normalize("NFKD", value.translate(_PL_TRANSLIT))
     ascii_value = ascii_value.encode("ascii", "ignore").decode("ascii")
@@ -145,7 +162,7 @@ class LlmStructureExtractor:
                 {"backend": self._backend.model_name},
             )
 
-        page_texts = [page.text.strip() for page in parsed.pages if page.text.strip()]
+        page_texts = [compact_text(page.text) for page in parsed.pages if page.text.strip()]
         tables_note = self._tables_note(parsed.tables)
         if page_texts or tables_note:
             document = self._extract_document(page_texts, tables_note)

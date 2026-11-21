@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     LLM_MODEL: str = ""
     LLM_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0)
     LLM_RESPONSE_FORMAT: Literal["json_schema", "json_object", "none"] = "json_object"
+    # Tryb local (CPU): liczba wątków llama.cpp (0 = wszystkie rdzenie logiczne; na CPU
+    # z hyperthreadingiem zwykle szybciej = liczba rdzeni fizycznych) i rozmiar kontekstu.
+    LLM_THREADS: int = Field(default=0, ge=0)
+    LLM_CTX: int = Field(default=8192, ge=2048)
 
     # NoDecode: akceptujemy zarówno tablicę JSON, jak i listę po przecinku (dekodowanie w walidatorze).
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:8000", "http://127.0.0.1:8000"]
