@@ -46,6 +46,28 @@ def _find_gguf(models_dir: Path) -> Path | None:
     return (preferred or files)[0]
 
 
+def _logical_cpus() -> int:
+    # process_cpu_count (3.13+) respektuje affinity/cpuset (np. docker --cpuset-cpus).
+    counter = getattr(os, "process_cpu_count", None) or os.cpu_count
+    return counter() or 4
+
+
+def cpu_threads(n_threads: int = 0) -> tuple[int, int]:
+    """(wątki generacji, wątki prefill) dla llama.cpp na CPU.
+
+    Generacja tokenów jest ograniczona przepustowością pamięci i synchronizuje wszystkie
+    wątki po każdym tokenie: przy wątkach = wszystkie rdzenie LOGICZNE (SMT) każdy proces
+    w tle (przeglądarka, Docker, VPN) zatrzymuje cały krok i czas skacze kilkukrotnie
+    między przebiegami. Pomiar (Ryzen 5 8645HS, 6C/12T, Qwen3-4B Q4_K_M, gramatyka JSON):
+    Docker 7,4 tok/s przy 12 wątkach vs 12,6 tok/s przy 6. Domyślnie więc generacja na
+    połowie rdzeni logicznych (≈ rdzenie fizyczne), a prefill promptu (obliczeniowy,
+    skaluje się z SMT) na wszystkich. LLM_THREADS > 0 ustawia wątki generacji jawnie.
+    """
+    logical = _logical_cpus()
+    generation = n_threads if n_threads > 0 else max(1, logical // 2)
+    return generation, max(generation, logical)
+
+
 def _load_llm(model_path: Path, n_threads: int = 0, n_ctx: int = N_CTX) -> Any:
     """Model ładowany raz na proces (cache) - kolejne żądania nie płacą za wczytanie wag."""
     key = f"{model_path.resolve()}|{n_threads}|{n_ctx}"
@@ -59,11 +81,13 @@ def _load_llm(model_path: Path, n_threads: int = 0, n_ctx: int = N_CTX) -> Any:
                 "Brak biblioteki llama-cpp-python. Zainstaluj extras: pip install -e '.[llm]'.",
                 {"reason": str(exc)},
             ) from exc
+        generation_threads, batch_threads = cpu_threads(n_threads)
         try:
             llm = Llama(
                 model_path=str(model_path.resolve()),
                 n_ctx=n_ctx,
-                n_threads=n_threads or os.cpu_count() or 4,
+                n_threads=generation_threads,
+                n_threads_batch=batch_threads,
                 n_gpu_layers=0,
                 verbose=False,
             )

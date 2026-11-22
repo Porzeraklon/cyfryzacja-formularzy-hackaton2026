@@ -33,3 +33,24 @@ def test_local_backend_threads_and_ctx_from_settings(tmp_path):
     backend = build_llm_backend(settings)
     assert isinstance(backend, LocalLlamaBackend)
     assert backend._n_threads == 6 and backend._n_ctx == 4096
+
+
+def test_cpu_threads_default_uses_physical_cores_for_generation(monkeypatch):
+    from backend.app.modules.ai_extractor import llm_backend
+
+    monkeypatch.setattr(llm_backend, "_logical_cpus", lambda: 12)
+    assert llm_backend.cpu_threads(0) == (6, 12)
+    assert llm_backend.cpu_threads(4) == (4, 12)
+    monkeypatch.setattr(llm_backend, "_logical_cpus", lambda: 1)
+    assert llm_backend.cpu_threads(0) == (1, 1)
+
+
+def test_llm_schema_has_no_name_and_ids_come_from_labels():
+    import json
+
+    from backend.app.modules.ai_extractor.extractor import LlmStructureExtractor, _LlmDocument, _LlmField
+
+    assert '"name"' not in json.dumps(_LlmDocument.model_json_schema())
+    field = _LlmField.model_validate({"label": "Kwota nadpłaty", "field_type": "number"})
+    result = LlmStructureExtractor(None)._to_field_definition(field, set())
+    assert result.field_id == "kwota_nadplaty" and result.name == "kwota_nadplaty"

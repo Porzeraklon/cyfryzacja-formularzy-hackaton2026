@@ -14,6 +14,7 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,15 +46,14 @@ _SYSTEM_PROMPT = (
     "2) Pomijaj standardowe elementy: dane wnioskodawcy (imię, nazwisko, PESEL, adres), "
     "dane do kontaktu oraz zgody i oświadczenia — są dodawane automatycznie ze standardów COI. "
     "Skup się na treści merytorycznej wniosku. "
-    "3) name to krótki identyfikator snake_case (np. kwota_nadplaty, rok_podatkowy); "
-    "label to oryginalna etykieta pola z dokumentu, po polsku. "
+    "3) label to oryginalna etykieta pola z dokumentu, po polsku. "
     "4) field_type dobierz do treści: text, number, date, select, radio, "
     "checkbox (wielokrotny wybór), textarea, file, "
     "repeatable_group (powtarzalna tabela — kolumny podaj w fields), "
     "text_block (instrukcja lub pouczenie bez pola), info_section (blok informacyjny). "
     "5) Dla select/radio/checkbox podaj options (code + label) wyliczone z treści dokumentu. "
     "6) Tabele z wierszami do powielania (np. lista osób, okresów, nieruchomości) zamień na "
-    "repeatable_group: label = nazwa tabeli, fields = kolumny (name, label, field_type każdej). "
+    "repeatable_group: label = nazwa tabeli, fields = kolumny (label, field_type każdej). "
     "7) required=true tylko gdy dokument oznacza pole jako obowiązkowe (gwiazdka, 'wymagane'). "
     "8) Dla text_block/info_section treść umieść w help_text; label może być pusty."
 )
@@ -66,11 +66,21 @@ class _LlmOption(BaseModel):
     label: str
 
 
+def _drop_name_from_schema(schema: dict[str, Any]) -> None:
+    """Identyfikator pola wylicza kod z etykiety - model go nie generuje.
+
+    Na CPU czas ekstrakcji to niemal wyłącznie tokeny WYJŚCIA (~7-12 tok/s), a polski
+    snake_case tokenizuje się słabo: „name” to ok. 20% tokenów odpowiedzi.
+    Pole zostaje opcjonalne w walidacji (zgodność z modelami w trybie api, które je zwrócą).
+    """
+    schema.get("properties", {}).pop("name", None)
+
+
 class _LlmColumn(BaseModel):
     # Kolumna bez rekurencji: rekurencyjny schemat JSON crashuje gramatykę GBNF llama.cpp.
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra=_drop_name_from_schema)
 
-    name: str
+    name: str | None = None
     label: str
     field_type: FieldType
     required: bool = False
@@ -79,9 +89,9 @@ class _LlmColumn(BaseModel):
 
 
 class _LlmField(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra=_drop_name_from_schema)
 
-    name: str
+    name: str | None = None
     label: str
     field_type: FieldType
     required: bool = False
@@ -373,7 +383,7 @@ class LlmStructureExtractor:
         )
 
     def _to_field_definition(self, llm_field: _LlmField | _LlmColumn, used_ids: set[str]) -> FieldDefinition:
-        base = _slugify(llm_field.name) or _slugify(llm_field.label)
+        base = _slugify(llm_field.name or llm_field.label)
         field_id = self._unique_id(base, used_ids)
         options = (
             [DictionaryItem(code=item.code, label=item.label) for item in llm_field.options]
@@ -386,7 +396,7 @@ class LlmStructureExtractor:
             children = [self._to_field_definition(child, used_ids) for child in nested]
         return FieldDefinition(
             field_id=field_id,
-            name=llm_field.name,
+            name=llm_field.name or field_id,
             label=llm_field.label,
             field_type=llm_field.field_type,
             required=llm_field.required,
