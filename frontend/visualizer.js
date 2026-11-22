@@ -164,17 +164,118 @@ function vizNewEntry(section) {
 
 /* ---------------- Słowniki ---------------- */
 
+/* Etykiety słowników liczone raz na tablicę pozycji (słownik miejscowości ma dziesiątki tysięcy wpisów). */
+const vizLabelCache = new WeakMap();
+function vizLabels(items) {
+  if (!vizLabelCache.has(items)) vizLabelCache.set(items, items.map((i) => i.label));
+  return vizLabelCache.get(items);
+}
+
 async function vizOptions(field) {
   if ((field.options || []).length) return field.options.map((o) => o.name);
   if (!field.dictionaryName) return [];
   const dict = fdFindDictionary(field.dictionaryName);
   if (dict?.backendId) {
     const items = await getDictionaryItems(dict.backendId);
-    if (items.length) return items.map((i) => i.label);
+    if (items.length) return vizLabels(items);
   }
   if (dict?.items) return dict.items;
-  const direct = await getDictionaryItems(field.dictionaryName);
-  return direct.map((i) => i.label);
+  return vizLabels(await getDictionaryItems(field.dictionaryName));
+}
+
+/* Duże listy (np. miejscowości) nie są renderowane jako <select> z tysiącami <option> — to blokowało
+ * przeglądarkę przy każdym otwarciu. Zamiast tego combobox: pole tekstowe + lista co najwyżej
+ * VIZ_COMBO_LIMIT pasujących pozycji, budowana dopiero przy otwarciu / wpisywaniu. */
+const VIZ_COMBO_THRESHOLD = 200;
+const VIZ_COMBO_LIMIT = 50;
+
+function vizCombobox(id, describedBy, options, initial, commit, title) {
+  const listId = `${id}-list`;
+  let matches = [];
+  let active = -1;
+  let committed = initial;
+  const commitValue = commit;
+  commit = (value) => { committed = value; commitValue(value); };
+  const input = el("input", { type: "text", id, role: "combobox", autocomplete: "off", class: "combo-input",
+    placeholder: "Wybierz lub wpisz, aby wyszukać…", "aria-autocomplete": "list", "aria-expanded": "false",
+    "aria-controls": listId, "aria-describedby": describedBy, "aria-label": title || null });
+  input.value = initial;
+  const list = el("ul", { id: listId, class: "combo-list hidden", role: "listbox" });
+  const box = el("div", { class: "combo" }, input, list);
+
+  const normalize = (s) => s.toLocaleLowerCase("pl");
+  const close = () => { list.classList.add("hidden"); input.setAttribute("aria-expanded", "false"); active = -1; };
+  const choose = (value) => {
+    input.value = value;
+    close();
+    commit(value);
+  };
+  const setActive = (i) => {
+    const items = list.children;
+    if (items[active]) items[active].classList.remove("active");
+    active = i;
+    if (items[active]) {
+      items[active].classList.add("active");
+      items[active].scrollIntoView({ block: "nearest" });
+      input.setAttribute("aria-activedescendant", items[active].id);
+    } else input.removeAttribute("aria-activedescendant");
+  };
+  const open = (query) => {
+    if (input.readOnly) return;
+    const q = normalize(query.trim());
+    matches = [];
+    let total = 0;
+    if (!q) {
+      matches = options.slice(0, VIZ_COMBO_LIMIT);
+      total = options.length;
+    } else {
+      const starts = [];
+      const contains = [];
+      for (const name of options) {
+        const idx = normalize(name).indexOf(q);
+        if (idx === 0) starts.push(name);
+        else if (idx > 0) contains.push(name);
+      }
+      total = starts.length + contains.length;
+      matches = starts.concat(contains).slice(0, VIZ_COMBO_LIMIT);
+    }
+    const rows = matches.map((name, i) => el("li", { id: `${listId}-${i}`, role: "option", class: "combo-option",
+      onmousedown: (e) => { e.preventDefault(); choose(name); } }, name));
+    if (!matches.length) rows.push(el("li", { class: "combo-empty", text: "Brak wyników" }));
+    else if (total > matches.length) {
+      rows.push(el("li", { class: "combo-more", text: `Pokazano ${matches.length} z ${total} — doprecyzuj wyszukiwanie` }));
+    }
+    list.replaceChildren(...rows);
+    list.classList.remove("hidden");
+    input.setAttribute("aria-expanded", "true");
+    active = -1;
+  };
+
+  let timer = null;
+  input.addEventListener("focus", () => open(""));
+  input.addEventListener("click", () => { if (list.classList.contains("hidden")) open(""); });
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => open(input.value), 120);
+    if (!input.value) commit("");
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (list.classList.contains("hidden")) open(input.value); setActive(Math.min(active + 1, matches.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(Math.max(active - 1, 0)); }
+    else if (e.key === "Enter" && active >= 0 && matches[active]) { e.preventDefault(); choose(matches[active]); }
+    else if (e.key === "Escape") close();
+  });
+  input.addEventListener("blur", () => {
+    close();
+    // Dozwolone są tylko wartości ze słownika — dokładne dopasowanie (bez względu na wielkość liter) akceptujemy.
+    const typed = input.value.trim();
+    if (typed === committed) return;
+    if (!typed) { commit(""); return; }
+    const exact = options.find((name) => normalize(name) === normalize(typed));
+    if (exact) choose(exact);
+    else commit("");
+  });
+  return box;
 }
 
 /* ---------------- Render ---------------- */
@@ -341,6 +442,12 @@ async function renderControl(question, nodes, store, ctx = {}) {
     }
     case "SELECT": {
       const options = await vizOptions(field);
+      if (options.length > VIZ_COMBO_THRESHOLD) {
+        const input = vizCombobox(id, describedBy, options, store.get() ?? "", commit, field.title || "");
+        node.controls = [input.querySelector("input")];
+        vizAppend(wrap, label(`${id}`), descEl, input, badge, errorEl);
+        return wrap;
+      }
       const input = el("select", { id, "aria-describedby": describedBy, onchange: (e) => commit(e.target.value) },
         el("option", { value: "" }, "Wybierz"), options.map((name) => el("option", { value: name }, name)));
       input.value = store.get() ?? "";
