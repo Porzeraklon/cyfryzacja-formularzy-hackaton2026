@@ -174,8 +174,9 @@ docker build -t formularzex:0.2.1 .
 docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.1-ai .
 ```
 
-Build wariantu `-ai` pobiera **2,33 GiB** wagi z Hugging Face (warstwa jest cache'owana, więc
-kolejne buildy nie pobierają jej ponownie). Katalog `models/` z repozytorium **nie jest** używany
+Build wariantu `-ai` pobiera **2,33 GiB** wagi z Hugging Face. Warstwa wag leży **przed** `COPY`
+kodu i venv, więc zmiany kodu ani dokumentacji nie pobierają jej ponownie (i nie wysyłają jej
+ponownie do rejestru). Katalog `models/` z repozytorium **nie jest** używany
 przez build (`.dockerignore`), więc obraz buduje się też z czystego klona. Waga jest przypięta
 rewizją repo i sumą kontrolną, a niezgodność sha256 **przerywa build**:
 

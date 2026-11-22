@@ -55,13 +55,8 @@ RUN groupadd --gid 10001 appuser \
     && useradd --uid 10001 --gid appuser --create-home appuser
 
 WORKDIR /app
-COPY --from=builder /opt/venv /opt/venv
-COPY pyproject.toml README.md ./
-COPY backend ./backend
-COPY frontend ./frontend
-COPY data ./data
 RUN mkdir -p /app/models \
-    && chown -R appuser:appuser /app
+    && chown appuser:appuser /app /app/models
 
 USER 10001
 
@@ -94,6 +89,14 @@ if digest.hexdigest() != expected:
     sys.exit(f"sha256 wagi {name} niezgodny: {digest.hexdigest()} != {expected}")
 print(f"LLM: {name} ({target.stat().st_size} B, sha256 OK)")
 PY
+
+# Kod i venv DOPIERO po warstwie wag: zmiana kodu lub README nie unieważnia 2.5 GB
+# (bez ponownego pobierania i ponownego uploadu warstwy do rejestru).
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=appuser:appuser pyproject.toml README.md ./
+COPY --chown=appuser:appuser backend ./backend
+COPY --chown=appuser:appuser frontend ./frontend
+COPY --chown=appuser:appuser data ./data
 
 LABEL org.opencontainers.image.source="https://github.com/Porzeraklon/cyfryzacja-formularzy-hackaton2026" \
       org.opencontainers.image.title="formularzex" \
