@@ -1,4 +1,4 @@
-# COI Form Digitizer — Cyfryzacja formularzy (Wyzwanie COI)
+# formularzex — Cyfryzacja formularzy (Wyzwanie COI)
 
 Aplikacja zamieniająca urzędowe formularze źródłowe (**PDF, DOC/DOCX, ODS/XLSX, JPG/JPEG/JPE, PNG**)
 w ustrukturyzowaną e-Uługę COI:
@@ -20,16 +20,147 @@ Wyłącznie licencje permisywne (MIT/Apache-2.0/BSD/ISC/PSF/MPL-2.0), Docker non
 
 ---
 
-## 1. Budowanie obrazu Docker
+## 1. Uruchomienie — polecana metoda: `docker-compose.yml`
 
-Wymagania: Docker z pluginem `compose`. Obraz buduje się z `Dockerfile` w katalogu głównym:
+Wymagania: Docker z pluginem `compose` i nic więcej. Gotowe obrazy są na GHCR, a cała konfiguracja
+wchodzi przez ENV **w runtime** (nic nie jest wypiekane w obrazie).
+
+| Obraz | Zawartość | Rozmiar |
+|---|---|---|
+| `ghcr.io/porzeraklon/formularzex:0.2.0` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
+| `ghcr.io/porzeraklon/formularzex:0.2.0-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) | ~1 GB |
+
+Obrazy są **publiczne** — `docker pull` działa bez logowania do GHCR.
+
+Po starcie (oba warianty):
+
+- GUI (Import → JSON i słowniki → Wizualizator e-Uługi): **http://localhost:8000**
+- Swagger (interaktywna dokumentacja API): **http://localhost:8000/docs**
+- Health: **http://localhost:8000/api/v1/health**
+
+### A. Compose z konfiguracją wprost w pliku (nie wymaga `.env`)
+
+Samowystarczalny plik — zapisz jako `docker-compose.yml` w dowolnym katalogu i uruchom
+`docker compose up -d`. Słowniki COI i frontend są w obrazie, więc żadne wolumeny nie są potrzebne:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/porzeraklon/formularzex:0.2.0   # jawny tag, zero :latest
+    ports:
+      - "8000:8000"                  # wyłącznie port aplikacji
+    environment:
+      ENV: development               # production wyłącza /auth/dev-token
+      USE_MOCK_PIPELINE: "true"      # "false" = realny pipeline (obraz -ai + wagi GGUF)
+      MODELS_DIR: models
+      DICTIONARIES_DIR: data/dictionaries
+      LLM_BACKEND: local             # local = GGUF offline | api = endpoint OpenAI-compatible
+      MAX_FILE_SIZE_BYTES: "20971520"
+      MAX_BATCH_FILES: "20"
+      JWT_AUTH_ENABLED: "false"      # w produkcji "true" + silny sekret
+      JWT_SECRET_KEY: change-me-to-a-long-random-secret-in-production
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: "60"
+      CORS_ORIGINS: '["http://localhost:8000","http://127.0.0.1:8000"]'
+    read_only: true                  # przetwarzanie plików wyłącznie w RAM
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+```
+
+`CORS_ORIGINS` **musi być tablicą JSON** (patrz [Konfiguracja](#3-konfiguracja)).
+W produkcji sekret podawaj przez ENV powłoki (`JWT_SECRET_KEY=$(openssl rand -hex 32)`)
+albo `.env` — nie commituj go w pliku compose.
+
+### B. Compose ciągnący konfigurację z `.env`
+
+Wariant z repozytorium: wartości trzymasz w `.env` (gitignore), compose je tylko wczytuje.
 
 ```bash
-# wariant zalecany (compose nadaje jawny tag coi-form-digitizer:0.1.0)
-docker compose build
+cp .env.example .env        # w produkcji ustaw silny JWT_SECRET_KEY!
+docker compose up -d
+docker compose logs -f
+```
+
+```yaml
+services:
+  app:
+    image: ghcr.io/porzeraklon/formularzex:0.2.0
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env                   # konfiguracja i sekrety WYŁĄCZNIE w runtime
+        required: false              # brak .env = wartości domyślne z aplikacji
+    volumes:
+      - ./data:/app/data:ro          # baza słowników COI (podmiana bez przebudowy obrazu)
+      - models_data:/app/models:ro   # katalog na lokalne wagi AI (pusty w trybie mock)
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  models_data:
+```
+
+### C. Realny pipeline AI w Dockerze (OCR + lokalny LLM)
+
+Obraz `-ai` ma zainstalowane extras `[ai,llm,llm-api]`. Wagi GGUF pobierasz **ręcznie, poza
+runtime** do katalogu `models/` (sekcja 2A) i montujesz tylko do odczytu:
+
+```yaml
+services:
+  app-ai:
+    image: ghcr.io/porzeraklon/formularzex:0.2.0-ai
+    ports:
+      - "8000:8000"
+    environment:
+      USE_MOCK_PIPELINE: "false"
+      LLM_BACKEND: local             # albo api + LLM_API_URL/LLM_MODEL/LLM_API_KEY
+      MODELS_DIR: models
+      CORS_ORIGINS: '["http://localhost:8000","http://127.0.0.1:8000"]'
+    volumes:
+      - ./models:/app/models:ro      # Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+```
+
+W repozytorium ten sam wariant jest usługą `app-ai` w profilu `ai`:
+
+```bash
+docker compose --profile ai up -d app-ai
+```
+
+Obie usługi nasłuchują na 8000 — uruchamiaj **jedną naraz** (`docker compose down` przed switchem).
+Pierwsza konwersja ładuje model do RAM (kilka–kilkadziesiąt sekund); `/health` pokazuje
+`llm: ready`, gdy waga jest na miejscu.
+
+### D. Budowanie obrazu lokalnie (zamiast pobierania z GHCR)
+
+`Dockerfile` jest wieloetapowy: etap build kompiluje zależności (m.in. `llama-cpp-python`)
+w venv, etap finalny nie ma narzędzi buildowych.
+
+```bash
+docker compose build                        # core (EXTRAS="")
+docker compose --profile ai build app-ai    # realny pipeline (EXTRAS="ai,llm,llm-api")
 
 # albo ręcznie, z jawnym tagiem (zakaz :latest)
-docker build -t coi-form-digitizer:0.1.0 .
+docker build -t formularzex:0.2.0 .
+docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.0-ai .
 ```
 
 Właściwości obrazu (NFR konkursowe):
@@ -39,32 +170,13 @@ Właściwości obrazu (NFR konkursowe):
   `no-new-privileges:true` (compose),
 - **sekrety i konfiguracja wyłącznie w runtime** (ENV/`.env`) — nic na etapie build,
 - `HEALTHCHECK` odpytuje `GET /api/v1/health` (interval 30 s, timeout 5 s),
-- eksponowany wyłącznie port **8000**.
+- eksponowany wyłącznie port **8000**,
+- `CMAKE_ARGS=-DGGML_NATIVE=OFF` — llama.cpp bez instrukcji specyficznych dla maszyny build
+  (przenośność obrazu między CPU).
 
-> **Uwaga:** obraz instaluje zależności **core** (lekki, bez modeli AI) — pełni działają w nim
-> GUI, wszystkie endpointy API i realistyczny **mock pipeline**. Realny pipeline AI wymaga
-> extras `[ai,llm]` — najprościej uruchomić go lokalnie (sekcja 2B). Aby zbudować obraz z realnym
-> pipeline, zmień w `Dockerfile` linię `pip install --no-cache-dir .` na
-> `pip install --no-cache-dir ".[ai,llm,llm-api]"` (uwaga: `llama-cpp-python` kompiluje się
-> ze źródeł — wymaga narzędzi buildowych w obrazie).
+## 2. Uruchomienie lokalne (bez Dockera)
 
-## 2. Uruchomienie aplikacji
-
-### A. Docker (GUI + API + mock pipeline — od razu, bez modeli)
-
-```bash
-cp .env.example .env        # w produkcji ustaw silny JWT_SECRET_KEY!
-docker compose up --build
-```
-
-- GUI (Import → JSON i słowniki → Wizualizator e-Uługi): **http://localhost:8000**
-- Swagger (interaktywna dokumentacja API): **http://localhost:8000/docs**
-- Health: **http://localhost:8000/api/v1/health**
-
-Wolumeny: `./data:/app/data:ro` (baza słowników COI) oraz `models_data:/app/models:ro`
-(katalog na lokalne wagi AI — pusty w trybie mock).
-
-### B. Lokalnie z realnym pipeline AI (tryb konkursowy, CPU, bez sieci)
+### A. Realny pipeline AI (tryb konkursowy, CPU, bez sieci)
 
 Wymagany Python **3.13+** (host deweloperski 3.13; obraz Dockera celuje w 3.14):
 
@@ -97,7 +209,7 @@ uvicorn backend.app.main:app --port 8000
 Brak wag GGUF albo bibliotek extras → `/health` raportuje `llm=missing` (`status: degraded`),
 a `convert` zwraca **503 `PIPELINE_NOT_READY`** z instrukcją naprawy (bez cichego fallbacku).
 
-### C. Opcjonalnie: duży LLM na endpointcie OpenAI-compatible (`LLM_BACKEND=api`)
+### B. Opcjonalnie: duży LLM na endpointcie OpenAI-compatible (`LLM_BACKEND=api`)
 
 Gdy urząd dysponuje własnym serwerem modelu (vLLM, llama.cpp server…), aplikacja może zamiast
 lokalnego GGUF wołać ten endpoint — **wyłącznie wskazany adres** i wyłącznie model z otwartymi wagami,
@@ -241,7 +353,7 @@ curl http://localhost:8000/api/v1/health
 ## Testy i jakość
 
 ```bash
-pytest          # 166 testów: bezpieczeństwo plików, kontrakty API, walidatory, reguły 1–12, backend LLM, licencje
+pytest          # 180 testów: bezpieczeństwo plików, kontrakty API, walidatory, reguły 1–12, backend LLM, licencje
 ruff check backend/ && ruff format --check backend/
 ```
 
@@ -249,6 +361,8 @@ ruff check backend/ && ruff format --check backend/
 - `test_api_contracts.py` — wszystkie endpointy (convert, batch, validate-json/field, dictionaries, JWT).
 - `test_llm_backend.py` / `test_extractor_llm.py` — przełącznik backendu, klient api i ekstrakcja:
   **zero sieci i zero modelu** (`httpx.MockTransport`, fałszywe GGUF).
+- `test_pipeline_readiness.py` — `/health` raportuje brak **bibliotek** (nie tylko wag), a brak extras
+  daje 503 `PIPELINE_NOT_READY`, nie 500.
 - `test_form_definition_validation.py` — reguły 1–12 FormDefinition (każda łapana na zepsutym wariancie).
 - `test_field_validation.py` — sumy kontrolne PESEL/NIP/REGON/dowód i formaty ZIP_CODE/EMAIL/EPUAP/ADE.
 

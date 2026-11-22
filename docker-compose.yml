@@ -1,17 +1,50 @@
+# Polecana metoda uruchomienia: docker compose up -d (obraz z ghcr.io, publiczny).
+# app     = core (GUI + API + mock pipeline), lekki
+# app-ai  = realny pipeline AI (OCR + lokalny GGUF lub tryb api), profil "ai"
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: coi-form-digitizer:0.1.0   # jawny tag, zero :latest
+      args:
+        EXTRAS: ""
+    image: ghcr.io/porzeraklon/formularzex:0.2.0   # jawny tag, zero :latest
     ports:
       - "8000:8000"                  # wyłącznie port aplikacji
     env_file:
-      - .env                         # konfiguracja i sekrety WYŁĄCZNIE w runtime
+      - path: .env                   # konfiguracja i sekrety WYŁĄCZNIE w runtime
+        required: false
     volumes:
-      - ./data:/app/data:ro          # baza słowników COI (Branch 1)
+      - ./data:/app/data:ro          # baza słowników COI
       - models_data:/app/models:ro   # lokalne wagi modeli AI/OCR (offline)
     read_only: true                  # ulotne przetwarzanie: zero trwałych zapisów
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  app-ai:
+    profiles: ["ai"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        EXTRAS: "ai,llm,llm-api"
+    image: ghcr.io/porzeraklon/formularzex:0.2.0-ai
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      USE_MOCK_PIPELINE: "false"     # realny pipeline; LLM_BACKEND (local/api) z .env
+    volumes:
+      - ./data:/app/data:ro
+      - ./models:/app/models:ro      # wagi GGUF pobrane ręcznie poza runtime (offline)
+    read_only: true
     tmpfs:
       - /tmp
     cap_drop:

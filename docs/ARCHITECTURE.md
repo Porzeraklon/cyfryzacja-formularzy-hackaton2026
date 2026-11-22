@@ -1,4 +1,4 @@
-# Architektura — COI Form Digitizer
+# Architektura — formularzex
 
 ## 1. Zasady nadrzędne
 

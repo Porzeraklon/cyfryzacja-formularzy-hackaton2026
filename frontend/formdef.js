@@ -1,4 +1,4 @@
-/* COI Form Digitizer — model FormDefinition (oficjalny format importu e-Usług COI).
+/* formularzex — model FormDefinition (oficjalny format importu e-Usług COI).
  * [OWNERSHIP: Branch 2] — frontend/.
  *
  * Źródła wymagań (materiały konkursowe):

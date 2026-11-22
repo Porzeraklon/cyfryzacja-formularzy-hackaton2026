@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import threading
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -111,7 +112,7 @@ class LocalLlamaBackend:
         return model_path.name if model_path else "local (brak pliku *.gguf)"
 
     def ready(self) -> bool:
-        return _find_gguf(self._models_dir) is not None
+        return _find_gguf(self._models_dir) is not None and find_spec("llama_cpp") is not None
 
     def complete(self, messages: list[dict[str, str]], json_schema: dict[str, Any]) -> str:
         model_path = _find_gguf(self._models_dir)

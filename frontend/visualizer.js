@@ -1,4 +1,4 @@
-/* COI Form Digitizer — wizualizator e-Usługi renderujący oficjalny FormDefinition.
+/* formularzex — wizualizator e-Usługi renderujący oficjalny FormDefinition.
  * [OWNERSHIP: Branch 2] — frontend/. Zależy od: formdef.js, vendor/jsonata.min.js (MIT, lokalnie)
  * oraz helperów z app.js ($, el, toast, api, downloadBlob, jsonFilename, getDictionaryItems).
  *

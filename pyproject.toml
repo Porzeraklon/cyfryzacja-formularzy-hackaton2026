@@ -3,13 +3,13 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "coi-form-digitizer"
-version = "0.1.0"
+name = "formularzex"
+version = "0.2.0"
 description = "Cyfryzacja formularzy (Wyzwanie COI) - pipeline AI/OCR na otwartych modelach (CPU) + wizualizator e-Uslugi"
 readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
-authors = [{ name = "COI Form Digitizer Team" }]
+authors = [{ name = "Zespół formularzex" }]
 
 # WYLACZNIE licencje permisywne (MIT / Apache-2.0 / BSD / ISC / PSF / MPL-2.0).
 # ZAKAZ GPL / AGPL (np. PyMuPDF/fitz jest AGPL - NIE uzywac).

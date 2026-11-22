@@ -9,7 +9,7 @@
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
+from importlib.util import find_spec
 from uuid import uuid4
 
 from backend.app.core.config import Settings, get_settings
@@ -211,13 +211,20 @@ class RealFormPipeline:
                 "(feat/backend-ai-pipeline).",
                 {"reason": str(exc)},
             ) from exc
+        except ImportError as exc:
+            raise PipelineNotReadyError(
+                "Brak bibliotek realnego pipeline (extras [ai,llm,llm-api]). "
+                "Zainstaluj: pip install -e '.[ai,llm,llm-api]', użyj obrazu "
+                "ghcr.io/porzeraklon/formularzex:0.2.0-ai albo ustaw USE_MOCK_PIPELINE=true.",
+                {"reason": str(exc)},
+            ) from exc
         return PipelineResult(form=form)
 
     def model_status(self) -> dict[str, str]:
-        models_dir = Path(self._settings.MODELS_DIR)
-        has_models = models_dir.is_dir() and any(models_dir.iterdir())
+        # Modele ONNX RapidOCR są wewnątrz wheela — gotowość znaczy „biblioteka jest”,
+        # a nie „katalog MODELS_DIR jest niepusty” (tam leżą tylko wagi GGUF).
         return {
-            "ocr": "ready" if has_models else "missing",
+            "ocr": "ready" if find_spec("rapidocr_onnxruntime") else "missing",
             "llm": "ready" if self._llm_backend.ready() else "missing",
         }
 

@@ -1,4 +1,4 @@
-/* COI Form Digitizer — frontend SPA (Branch 2: feat/frontend-and-visualizer).
+/* formularzex — frontend SPA (Branch 2: feat/frontend-and-visualizer).
  * Vanilla JS bez bundlera, podpięty pod /api/v1/* (działa z mock pipeline).
  * Formularz w edytorze i wizualizatorze to oficjalny FormDefinition (formdef.js, visualizer.js);
  * JSON backendu w formacie wewnętrznym jest konwertowany przy otwarciu.
