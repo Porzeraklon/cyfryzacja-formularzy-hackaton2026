@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "formularzex"
-version = "0.2.1"
+version = "0.2.2"
 description = "Cyfryzacja formularzy (Wyzwanie COI) - pipeline AI/OCR na otwartych modelach (CPU) + wizualizator e-Uslugi"
 readme = "README.md"
 requires-python = ">=3.13"

@@ -27,8 +27,8 @@ wchodzi przez ENV **w runtime** (nic nie jest wypiekane w obrazie).
 
 | Obraz | Zawartość | Rozmiar |
 |---|---|---|
-| `ghcr.io/porzeraklon/formularzex:0.2.1` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
-| `ghcr.io/porzeraklon/formularzex:0.2.1-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) **z wagą GGUF w obrazie** | ~3,5 GB |
+| `ghcr.io/porzeraklon/formularzex:0.2.2` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
+| `ghcr.io/porzeraklon/formularzex:0.2.2-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) **z wagą GGUF w obrazie** | ~3,5 GB |
 
 Obraz `-ai` ma wypieczoną wagę `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (2,33 GiB, Apache-2.0)
 w `/app/models` — po `docker pull` działa od razu, **bez pobierania modelu i bez wolumenu**.
@@ -49,7 +49,7 @@ Samowystarczalny plik — zapisz jako `docker-compose.yml` w dowolnym katalogu i
 ```yaml
 services:
   app:
-    image: ghcr.io/porzeraklon/formularzex:0.2.1   # jawny tag, zero :latest
+    image: ghcr.io/porzeraklon/formularzex:0.2.2   # jawny tag, zero :latest
     ports:
       - "8000:8000"                  # wyłącznie port aplikacji
     environment:
@@ -92,7 +92,7 @@ docker compose logs -f
 ```yaml
 services:
   app:
-    image: ghcr.io/porzeraklon/formularzex:0.2.1
+    image: ghcr.io/porzeraklon/formularzex:0.2.2
     ports:
       - "8000:8000"
     env_file:
@@ -123,7 +123,7 @@ ani montować — `/health` raportuje `llm: ready` od pierwszego startu:
 ```yaml
 services:
   app-ai:
-    image: ghcr.io/porzeraklon/formularzex:0.2.1-ai
+    image: ghcr.io/porzeraklon/formularzex:0.2.2-ai
     ports:
       - "8000:8000"
     environment:
@@ -170,8 +170,8 @@ docker compose build                        # core (EXTRAS="")
 docker compose --profile ai build app-ai    # realny pipeline (EXTRAS="ai,llm,llm-api") + waga GGUF
 
 # albo ręcznie, z jawnym tagiem (zakaz :latest)
-docker build -t formularzex:0.2.1 .
-docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.1-ai .
+docker build -t formularzex:0.2.2 .
+docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.2-ai .
 ```
 
 Build wariantu `-ai` pobiera **2,33 GiB** wagi z Hugging Face. Warstwa wag leży **przed** `COPY`
@@ -186,7 +186,7 @@ docker build --build-arg EXTRAS=ai,llm,llm-api \
   --build-arg LLM_GGUF_REVISION=a06e946bb6b655725eafa393f4a9745d460374c9 \
   --build-arg LLM_GGUF_FILE=Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
   --build-arg LLM_GGUF_SHA256=3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597 \
-  -t formularzex:0.2.1-ai .
+  -t formularzex:0.2.2-ai .
 ```
 
 Inny model otwarty = podmień te cztery argumenty (pamiętaj o licencji permisywnej i CPU).
@@ -288,7 +288,7 @@ wzorzec: `.env.example`). Sekrety nigdy nie trafiają do obrazu Dockera ani repo
 | `LLM_TIMEOUT_SECONDS` | `600` | timeout żądania do endpointu (połączenie: 10 s) |
 | `LLM_THREADS` | `0` | tryb local: wątki llama.cpp (0 = wszystkie rdzenie logiczne) |
 | `LLM_CTX` | `8192` | tryb local: rozmiar kontekstu modelu GGUF |
-| `LLM_RESPONSE_FORMAT` | `json_object` | `json_schema` (strict, zalecane) / `json_object` / `none` |
+| `LLM_RESPONSE_FORMAT` | `json_object` | tryb `api`: `json_schema` (strict, zalecane) / `json_object` / `none` — szczegóły niżej |
 | `MAX_FILE_SIZE_BYTES` | `20971520` | limit rozmiaru pojedynczego pliku (20 MB) |
 | `MAX_BATCH_FILES` | `20` | limit plików w `convert-batch` |
 | `JWT_AUTH_ENABLED` | `false` | `true` = wymagany Bearer JWT na endpointach forms/dictionaries |
@@ -305,6 +305,24 @@ CORS_ORIGINS=["http://localhost:8000","http://127.0.0.1:8000"]
 ```
 
 (Wartość po przecinku działa tylko jako prawdziwa zmienna środowiskowa, np. `docker run -e`.)
+
+### `LLM_RESPONSE_FORMAT` — struktura odpowiedzi modelu (tryb `api`)
+
+Steruje polem `response_format` w żądaniu do endpointu OpenAI-compatible. Działa **wyłącznie
+w trybie `LLM_BACKEND=api`** — w trybie `local` schemat jest zawsze wymuszany gramatyką GBNF
+llama.cpp, niezależnie od tej zmiennej.
+
+| Wartość | Co leci w żądaniu | Efekt |
+|---|---|---|
+| `json_schema` | `{"type": "json_schema", "json_schema": {"name": "form_document", "strict": true, "schema": …}}` | strict structured output — model musi zwrócić dokładnie strukturę kontraktu (`title`, `pages[]`, `sections[]`, `fields[]`); **zalecane**, gdy endpoint wspiera `json_schema` |
+| `json_object` (domyślnie) | `{"type": "json_object"}` | gwarantuje tylko poprawny JSON — o strukturze decyduje model; najszersza zgodność endpointów |
+| `none` | brak `response_format` | dla endpointów, które odrzucają to pole |
+
+**Pułapka `json_object`:** poprawny JSON o złej strukturze (np. płaskie `pages[].fields` bez
+`sections`) nie przejdzie walidacji kontraktu (`extra="forbid"`) i zakończy się **503
+`PIPELINE_NOT_READY`** („Model LLM zwrócił niepoprawną strukturę JSON dla dokumentu.”) — bez
+fallbacku na `local`. Jeśli endpoint wspiera `json_schema` (vLLM, llama.cpp server, chmura
+z otwartym modelem), ustaw `LLM_RESPONSE_FORMAT=json_schema`.
 
 Dozwolone rozszerzenia plików: `.pdf .doc .docx .ods .xlsx .jpg .jpeg .jpe .png`
 (weryfikacja: nazwa ≤250 znaków, znaki zakazane, rozmiar, **MIME po magic bytes**, nie po rozszerzeniu).
