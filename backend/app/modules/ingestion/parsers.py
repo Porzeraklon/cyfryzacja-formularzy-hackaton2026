@@ -79,7 +79,11 @@ def _ocr_image(image: Any) -> str:
         result, _ = engine(array)
     if not result:
         return ""
-    return "\n".join(item[1] for item in result)
+    # OCR gubi miejsca do wpisania (kreski, wykropkowania, ramki, kratki) - dopisujemy je
+    # jako znaczniki „____” / „[ ]” w wierszach, w których leżą (moduł fill_marks).
+    from backend.app.modules.ingestion.fill_marks import annotate_ocr, detect_fill_marks
+
+    return annotate_ocr(result, detect_fill_marks(image))
 
 
 def _doc_piece_text(word: bytes, table: bytes) -> str | None:
