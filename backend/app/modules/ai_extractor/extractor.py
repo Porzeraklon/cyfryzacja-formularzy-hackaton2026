@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.core.exceptions import PipelineNotReadyError
 from backend.app.interfaces.pipeline import ParsedDocument
+from backend.app.modules.ai_extractor.header import extract_header
 from backend.app.modules.ai_extractor.llm_backend import LlmBackend
 from backend.app.schemas.form_schema import (
     DictionaryItem,
@@ -37,7 +38,7 @@ _PL_TRANSLIT = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzA
 _SYSTEM_PROMPT = (
     "Jesteś silnikiem cyfryzacji polskich formularzy urzędowych. "
     "Otrzymujesz tekst CAŁEGO dokumentu i zwracasz WYŁĄCZNIE JSON: title (tytuł wniosku) "
-    "oraz pages — 2-4 strony TEMATYCZNE (np. 'Przedmiot wniosku', 'Załączniki'), "
+    "oraz pages — 1-3 strony TEMATYCZNE z treścią merytoryczną (np. 'Przedmiot wniosku'), "
     "NIE odwzorowuj fizycznego podziału stron pliku PDF/DOCX. "
     "Zasady: "
     "1) Wyodrębnij tylko pola wynikające z tekstu — nie zmyślaj pól. "
@@ -162,6 +163,7 @@ class LlmStructureExtractor:
                 {"backend": self._backend.model_name},
             )
 
+        header = extract_header("\n".join(page.text for page in parsed.pages))
         page_texts = [compact_text(page.text) for page in parsed.pages if page.text.strip()]
         tables_note = self._tables_note(parsed.tables)
         if page_texts or tables_note:
@@ -174,7 +176,8 @@ class LlmStructureExtractor:
             self._to_page_definition(llm_page, order, used_ids)
             for order, llm_page in enumerate(document.pages, start=1)
         ]
-        pages = self._ensure_two_pages(pages)
+        # Minimum dwóch stron zapewnia enricher (strony standardowe + FINISH) - nie dzielimy
+        # sztucznie jedynej strony merytorycznej (referencje COI mają jedną stronę sprawy).
         self._add_table_fallbacks(parsed.tables, pages, used_ids)
         for order, page in enumerate(pages, start=1):
             page.page_id = f"page_{order}"
@@ -183,7 +186,9 @@ class LlmStructureExtractor:
         return FormDocumentSchema(
             metadata=FormMetadata(
                 form_id=_slugify(stem) or "formularz",
-                title=document.title.strip() or fallback_title,
+                # Tytuł i urząd z nagłówka deterministycznie (regex); LLM tylko jako zapas.
+                title=header.title or document.title.strip() or fallback_title,
+                office_name=header.office,
                 source_filename=parsed.source_filename,
                 source_format=parsed.source_format,
                 generated_at=datetime.now(UTC),
@@ -259,28 +264,6 @@ class LlmStructureExtractor:
                         sections_by_title[section_key] = target.sections[-1]
         # max_length=4 ogranicza pojedynczą odpowiedź LLM, nie scalony dokument z paczek.
         return _LlmDocument.model_construct(title=documents[0].title, pages=list(merged.values()))
-
-    @staticmethod
-    def _ensure_two_pages(pages: list[PageDefinition]) -> list[PageDefinition]:
-        """Gdy LLM zwrócił jedną stronę z wieloma sekcjami — dzieli ją tematycznie na dwie."""
-        if len(pages) != 1 or len(pages[0].sections) < 2:
-            return pages
-        only = pages[0]
-        split = len(only.sections) // 2
-        second = PageDefinition(
-            page_id="page_2",
-            title=only.sections[split].title,
-            order=2,
-            sections=only.sections[split:],
-        )
-        first = PageDefinition(
-            page_id="page_1",
-            title=only.title,
-            order=1,
-            description=only.description,
-            sections=only.sections[:split],
-        )
-        return [first, second]
 
     @staticmethod
     def _tables_note(tables: list[list[list[str]]]) -> str:

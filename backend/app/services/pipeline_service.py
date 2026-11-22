@@ -72,6 +72,7 @@ def build_mock_form(filename: str, mime_type: str) -> FormDocumentSchema:
             source_format=mime_type,
             generated_at=datetime.now(UTC),
             ai_agent_ready=True,
+            office_name="Urząd Gminy Ulan-Majorat",
         ),
         pages=[
             # Strona 2 referencji COI („Nadpłata i deklaracja podatkowa”) - 1:1 z wizualizacją

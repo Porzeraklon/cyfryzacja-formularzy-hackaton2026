@@ -351,6 +351,18 @@
           "default": true,
           "title": "Ai Agent Ready",
           "type": "boolean"
+        },
+        "office_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Office Name"
         }
       },
       "required": [

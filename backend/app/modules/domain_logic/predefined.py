@@ -268,7 +268,7 @@ def _address_section(
 
 
 def applicant_sections(
-    office_name: str = "Urząd Gminy Ulan-Majorat",
+    office_name: str | None = None,
     form_title: str | None = None,
 ) -> list[SectionDefinition]:
     """Sekcje strony „Dane wnioskodawcy” — dokładnie jak we wzorcu COI."""
@@ -284,7 +284,12 @@ def applicant_sections(
             order=1,
             fields=[
                 _field(
-                    "nazwa_urzedu", "Nazwa urzędu", required=True, initial_value=office_name, read_only=True
+                    # Urząd z nagłówka dokumentu: tylko do odczytu; nieznany - do uzupełnienia.
+                    "nazwa_urzedu",
+                    "Nazwa urzędu",
+                    required=True,
+                    initial_value=office_name,
+                    read_only=office_name is not None,
                 ),
             ],
         ),

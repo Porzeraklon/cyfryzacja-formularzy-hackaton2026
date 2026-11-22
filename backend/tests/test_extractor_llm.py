@@ -67,7 +67,8 @@ def test_delegates_to_backend_and_maps_document():
     backend = FakeBackend(json.dumps(document_payload()))
     form = LlmStructureExtractor(backend).extract(parsed_document())
     assert form.metadata.title == "Wniosek o zwrot nadpłaty podatku"
-    assert len(form.pages) == 2, "jedna strona z dwiema sekcjami jest dzielona tematycznie"
+    # Jedna strona merytoryczna zostaje jedna (minimum stron zapewnia enricher, jak w referencjach COI).
+    assert len(form.pages) == 1
     assert len(backend.calls) == 1
     assert backend.calls[0][0]["role"] == "system"
     assert backend.calls[0][1] == {"role": "user", "content": "Kwota nadpłaty: 120 zł\nRok podatkowy: 2025"}
@@ -139,3 +140,22 @@ def test_empty_document_with_ready_backend_uses_filename_fallback():
     form = LlmStructureExtractor(backend).extract(parsed_document(""))
     assert backend.calls == []
     assert form.metadata.title == "wniosek o zwrot"
+
+
+def test_header_title_and_office_from_regex_not_llm():
+    from backend.app.interfaces.pipeline import ParsedDocument, ParsedPage
+
+    text = (
+        "Wnioskodawca:\tAdresat:\n"
+        "………………………………….\n"
+        "(imię i nazwisko)                                Wójt Gminy Elbląg\n"
+        "WNIOSEK O USTALENIE NUMERU PORZĄDKOWEGO\n"
+        "Wnoszę o ustalenie numeru porządkowego budynkowi.\n"
+    )
+    backend = FakeBackend(json.dumps(document_payload()))
+    parsed = ParsedDocument(
+        source_filename="wniosek.docx", source_format="docx", pages=[ParsedPage(page_number=1, text=text)]
+    )
+    form = LlmStructureExtractor(backend).extract(parsed)
+    assert form.metadata.title == "Wniosek o ustalenie numeru porządkowego"
+    assert form.metadata.office_name == "Wójt Gminy Elbląg"

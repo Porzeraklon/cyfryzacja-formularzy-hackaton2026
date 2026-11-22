@@ -175,6 +175,8 @@ class FormMetadata(_ContractModel):
     source_format: str
     generated_at: datetime
     ai_agent_ready: bool = True
+    # Adresat wniosku odczytany deterministycznie z nagłówka (np. „Wójt Gminy Elbląg”); None = nieznany.
+    office_name: str | None = None
 
 
 class MappedDictionary(_ContractModel):

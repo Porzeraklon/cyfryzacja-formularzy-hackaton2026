@@ -146,7 +146,7 @@ class DomainLogicEnricher:
             for entry in _load_dictionaries(str(self._dictionaries_dir / DICTIONARIES_FILENAME))
         }
 
-        applicant = applicant_sections(form_title=result.metadata.title)
+        applicant = applicant_sections(office_name=result.metadata.office_name, form_title=result.metadata.title)
         contact = contact_sections()
         predefined_titles = {_normalize(section.title) for section in [*applicant, *contact]}
         injected_page_titles = {_normalize(APPLICANT_PAGE_TITLE), _normalize(CONTACT_PAGE_TITLE)}
