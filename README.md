@@ -27,8 +27,11 @@ wchodzi przez ENV **w runtime** (nic nie jest wypiekane w obrazie).
 
 | Obraz | Zawartość | Rozmiar |
 |---|---|---|
-| `ghcr.io/porzeraklon/formularzex:0.2.0` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
-| `ghcr.io/porzeraklon/formularzex:0.2.0-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) | ~1 GB |
+| `ghcr.io/porzeraklon/formularzex:0.2.1` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
+| `ghcr.io/porzeraklon/formularzex:0.2.1-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) **z wagą GGUF w obrazie** | ~3,5 GB |
+
+Obraz `-ai` ma wypieczoną wagę `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (2,33 GiB, Apache-2.0)
+w `/app/models` — po `docker pull` działa od razu, **bez pobierania modelu i bez wolumenu**.
 
 Obrazy są **publiczne** — `docker pull` działa bez logowania do GHCR.
 
@@ -46,12 +49,12 @@ Samowystarczalny plik — zapisz jako `docker-compose.yml` w dowolnym katalogu i
 ```yaml
 services:
   app:
-    image: ghcr.io/porzeraklon/formularzex:0.2.0   # jawny tag, zero :latest
+    image: ghcr.io/porzeraklon/formularzex:0.2.1   # jawny tag, zero :latest
     ports:
       - "8000:8000"                  # wyłącznie port aplikacji
     environment:
       ENV: development               # production wyłącza /auth/dev-token
-      USE_MOCK_PIPELINE: "true"      # "false" = realny pipeline (obraz -ai + wagi GGUF)
+      USE_MOCK_PIPELINE: "true"      # "false" = realny pipeline (obraz -ai, waga GGUF w środku)
       MODELS_DIR: models
       DICTIONARIES_DIR: data/dictionaries
       LLM_BACKEND: local             # local = GGUF offline | api = endpoint OpenAI-compatible
@@ -89,7 +92,7 @@ docker compose logs -f
 ```yaml
 services:
   app:
-    image: ghcr.io/porzeraklon/formularzex:0.2.0
+    image: ghcr.io/porzeraklon/formularzex:0.2.1
     ports:
       - "8000:8000"
     env_file:
@@ -113,13 +116,14 @@ volumes:
 
 ### C. Realny pipeline AI w Dockerze (OCR + lokalny LLM)
 
-Obraz `-ai` ma zainstalowane extras `[ai,llm,llm-api]`. Wagi GGUF pobierasz **ręcznie, poza
-runtime** do katalogu `models/` (sekcja 2A) i montujesz tylko do odczytu:
+Obraz `-ai` ma zainstalowane extras `[ai,llm,llm-api]` **oraz wagę GGUF w `/app/models`**
+(pobrana i zweryfikowana sumą sha256 na etapie build, nie w runtime). Nie musisz nic pobierać
+ani montować — `/health` raportuje `llm: ready` od pierwszego startu:
 
 ```yaml
 services:
   app-ai:
-    image: ghcr.io/porzeraklon/formularzex:0.2.0-ai
+    image: ghcr.io/porzeraklon/formularzex:0.2.1-ai
     ports:
       - "8000:8000"
     environment:
@@ -127,8 +131,6 @@ services:
       LLM_BACKEND: local             # albo api + LLM_API_URL/LLM_MODEL/LLM_API_KEY
       MODELS_DIR: models
       CORS_ORIGINS: '["http://localhost:8000","http://127.0.0.1:8000"]'
-    volumes:
-      - ./models:/app/models:ro      # Qwen3-4B-Instruct-2507-Q4_K_M.gguf
     read_only: true
     tmpfs:
       - /tmp
@@ -137,6 +139,15 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+```
+
+**Pułapka wolumenu:** zamontowanie `./models:/app/models` (np. pustego katalogu z klona)
+**przesłania** wagę z obrazu i `/health` wraca do `llm: missing`. Montuj ten katalog tylko
+świadomie, gdy chcesz podmienić model na inny plik `*.gguf`:
+
+```yaml
+    volumes:
+      - ./models:/app/models:ro      # własna waga zamiast wypieczonej
 ```
 
 W repozytorium ten sam wariant jest usługą `app-ai` w profilu `ai`:
@@ -156,12 +167,28 @@ w venv, etap finalny nie ma narzędzi buildowych.
 
 ```bash
 docker compose build                        # core (EXTRAS="")
-docker compose --profile ai build app-ai    # realny pipeline (EXTRAS="ai,llm,llm-api")
+docker compose --profile ai build app-ai    # realny pipeline (EXTRAS="ai,llm,llm-api") + waga GGUF
 
 # albo ręcznie, z jawnym tagiem (zakaz :latest)
-docker build -t formularzex:0.2.0 .
-docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.0-ai .
+docker build -t formularzex:0.2.1 .
+docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.1-ai .
 ```
+
+Build wariantu `-ai` pobiera **2,33 GiB** wagi z Hugging Face (warstwa jest cache'owana, więc
+kolejne buildy nie pobierają jej ponownie). Katalog `models/` z repozytorium **nie jest** używany
+przez build (`.dockerignore`), więc obraz buduje się też z czystego klona. Waga jest przypięta
+rewizją repo i sumą kontrolną, a niezgodność sha256 **przerywa build**:
+
+```bash
+docker build --build-arg EXTRAS=ai,llm,llm-api \
+  --build-arg LLM_GGUF_REPO=unsloth/Qwen3-4B-Instruct-2507-GGUF \
+  --build-arg LLM_GGUF_REVISION=a06e946bb6b655725eafa393f4a9745d460374c9 \
+  --build-arg LLM_GGUF_FILE=Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  --build-arg LLM_GGUF_SHA256=3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597 \
+  -t formularzex:0.2.1-ai .
+```
+
+Inny model otwarty = podmień te cztery argumenty (pamiętaj o licencji permisywnej i CPU).
 
 Właściwości obrazu (NFR konkursowe):
 
@@ -169,6 +196,8 @@ Właściwości obrazu (NFR konkursowe):
 - użytkownik **non-root `uid=10001`**, `read_only` + tmpfs `/tmp`, `cap_drop: ALL`,
   `no-new-privileges:true` (compose),
 - **sekrety i konfiguracja wyłącznie w runtime** (ENV/`.env`) — nic na etapie build,
+- wariant `-ai`: waga GGUF pobierana **na etapie build** (spoza runtime) i wypiekana w obrazie
+  jako `appuser` — runtime pozostaje w 100% offline,
 - `HEALTHCHECK` odpytuje `GET /api/v1/health` (interval 30 s, timeout 5 s),
 - eksponowany wyłącznie port **8000**,
 - `CMAKE_ARGS=-DGGML_NATIVE=OFF` — llama.cpp bez instrukcji specyficznych dla maszyny build
@@ -190,7 +219,9 @@ Wagi modeli (pobierane **ręcznie, poza runtime** — aplikacja nie sięga do si
 - **OCR**: RapidOCR ma modele ONNX wewnątrz wheela — nic nie pobierasz.
 - **LLM**: umieść plik GGUF w katalogu `MODELS_DIR` (domyślnie `models/`), np.
   `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (repozytorium `unsloth/Qwen3-4B-Instruct-2507-GGUF`,
-  licencja Apache-2.0). Wybierany jest pierwszy plik `*.gguf` (preferowane nazwy z `qwen3-4b`).
+  licencja Apache-2.0, sha256 `3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`).
+  Wybierany jest pierwszy plik `*.gguf` (preferowane nazwy z `qwen3-4b`).
+  W Dockerze ten krok nie jest potrzebny — obraz `-ai` ma wagę w środku (sekcja 1C).
 
 Konfiguracja `.env` dla realnego pipeline offline:
 
@@ -247,7 +278,7 @@ wzorzec: `.env.example`). Sekrety nigdy nie trafiają do obrazu Dockera ani repo
 |---|---|---|
 | `ENV` | `development` | `development` aktywuje `/auth/dev-token`; `production` go wyłącza |
 | `USE_MOCK_PIPELINE` | `true` | `false` = realny pipeline AI (OCR + LLM + mapowanie COI) |
-| `MODELS_DIR` | `models` | katalog lokalnych wag GGUF (wolumen; OCR nie wymaga wag) |
+| `MODELS_DIR` | `models` | katalog lokalnych wag GGUF (w obrazie `-ai` waga już tam jest; OCR nie wymaga wag) |
 | `DICTIONARIES_DIR` | `data/dictionaries` | lokalna baza słowników COI |
 | `LLM_BACKEND` | `local` | `local` = llama.cpp + GGUF (offline); `api` = endpoint OpenAI-compatible |
 | `LLM_API_URL` | — | bazowy URL endpointu (`/chat/completions` dopisywane automatycznie) |

@@ -31,6 +31,14 @@ FROM python:${PYTHON_TAG}
 
 ARG EXTRAS=""
 
+# Wagi LLM (Qwen3, Apache-2.0) pobierane WYŁĄCZNIE na etapie build i wypiekane w obrazie -ai:
+# runtime pozostaje offline, a obraz z GHCR jest gotowy do pracy bez montowania models/.
+# Rewizja repo HF + sha256 przypięte — ten sam plik co ręcznie pobierana waga do MODELS_DIR.
+ARG LLM_GGUF_REPO=unsloth/Qwen3-4B-Instruct-2507-GGUF
+ARG LLM_GGUF_REVISION=a06e946bb6b655725eafa393f4a9745d460374c9
+ARG LLM_GGUF_FILE=Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+ARG LLM_GGUF_SHA256=3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
@@ -56,6 +64,36 @@ RUN mkdir -p /app/models \
     && chown -R appuser:appuser /app
 
 USER 10001
+
+# EXTRAS="" (core) = katalog models/ pozostaje pusty; wariant AI dostaje wagę GGUF.
+# Pobieranie już jako appuser — bez dodatkowej warstwy chown na 2.5 GB pliku.
+RUN python - <<'PY'
+import hashlib
+import os
+import pathlib
+import sys
+import urllib.request
+
+if not os.environ.get("EXTRAS"):
+    raise SystemExit(0)
+
+name = os.environ["LLM_GGUF_FILE"]
+url = (
+    f"https://huggingface.co/{os.environ['LLM_GGUF_REPO']}"
+    f"/resolve/{os.environ['LLM_GGUF_REVISION']}/{name}"
+)
+expected = os.environ["LLM_GGUF_SHA256"]
+target = pathlib.Path("/app/models") / name
+digest = hashlib.sha256()
+with urllib.request.urlopen(url, timeout=120) as response, target.open("wb") as handle:
+    while chunk := response.read(8 * 1024 * 1024):
+        handle.write(chunk)
+        digest.update(chunk)
+if digest.hexdigest() != expected:
+    target.unlink()
+    sys.exit(f"sha256 wagi {name} niezgodny: {digest.hexdigest()} != {expected}")
+print(f"LLM: {name} ({target.stat().st_size} B, sha256 OK)")
+PY
 
 LABEL org.opencontainers.image.source="https://github.com/Porzeraklon/cyfryzacja-formularzy-hackaton2026" \
       org.opencontainers.image.title="formularzex" \

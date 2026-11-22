@@ -215,7 +215,7 @@ class RealFormPipeline:
             raise PipelineNotReadyError(
                 "Brak bibliotek realnego pipeline (extras [ai,llm,llm-api]). "
                 "Zainstaluj: pip install -e '.[ai,llm,llm-api]', użyj obrazu "
-                "ghcr.io/porzeraklon/formularzex:0.2.0-ai albo ustaw USE_MOCK_PIPELINE=true.",
+                "ghcr.io/porzeraklon/formularzex:0.2.1-ai albo ustaw USE_MOCK_PIPELINE=true.",
                 {"reason": str(exc)},
             ) from exc
         return PipelineResult(form=form)

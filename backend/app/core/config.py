@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     ENV: Literal["development", "test", "production"] = "development"
     APP_NAME: str = "formularzex"
-    APP_VERSION: str = "0.2.0"
+    APP_VERSION: str = "0.2.1"
     API_V1_PREFIX: str = "/api/v1"
 
     MAX_FILE_SIZE_BYTES: int = Field(default=20 * 1024 * 1024, gt=0)
