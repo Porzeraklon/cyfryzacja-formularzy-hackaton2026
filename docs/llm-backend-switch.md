@@ -71,7 +71,7 @@ cp .env.example .env
 testów (`python-docx`, `pypdf`, `pdfplumber`, rapidocr).
 
 Świeży klon **nie ma wag**: `models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (2.5 GB) jest gitignored.
-Wyjątek: obraz Docker `ghcr.io/porzeraklon/formularzex:0.2.2-ai` ma tę wagę wypieczoną w `/app/models`
+Wyjątek: obraz Docker `ghcr.io/porzeraklon/formularzex:0.2.3-ai` ma tę wagę wypieczoną w `/app/models`
 (pobrana na etapie build z przypiętą rewizją HF i sha256), więc tam nic nie pobierasz — nie montuj
 też pustego `./models`, bo przesłoni model z obrazu.
 `models/.gitkeep` jest śledzony, więc `/health` raportuje `ocr=ready` także bez wag — to heurystyka

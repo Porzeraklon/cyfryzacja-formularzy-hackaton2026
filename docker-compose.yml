@@ -8,7 +8,7 @@ services:
       dockerfile: Dockerfile
       args:
         EXTRAS: ""
-    image: ghcr.io/porzeraklon/formularzex:0.2.2   # jawny tag, zero :latest
+    image: ghcr.io/porzeraklon/formularzex:0.2.3   # jawny tag, zero :latest
     ports:
       - "8000:8000"                  # wyłącznie port aplikacji
     env_file:
@@ -33,7 +33,7 @@ services:
       dockerfile: Dockerfile
       args:
         EXTRAS: "ai,llm,llm-api"
-    image: ghcr.io/porzeraklon/formularzex:0.2.2-ai
+    image: ghcr.io/porzeraklon/formularzex:0.2.3-ai
     ports:
       - "8000:8000"
     env_file:

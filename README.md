@@ -27,8 +27,8 @@ wchodzi przez ENV **w runtime** (nic nie jest wypiekane w obrazie).
 
 | Obraz | Zawartość | Rozmiar |
 |---|---|---|
-| `ghcr.io/porzeraklon/formularzex:0.2.2` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
-| `ghcr.io/porzeraklon/formularzex:0.2.2-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) **z wagą GGUF w obrazie** | ~3,5 GB |
+| `ghcr.io/porzeraklon/formularzex:0.2.3` | GUI + całe REST API + realistyczny **mock pipeline** (bez modeli AI) | ~160 MB |
+| `ghcr.io/porzeraklon/formularzex:0.2.3-ai` | to samo + **realny pipeline**: OCR RapidOCR + lokalny LLM llama.cpp (i tryb `api`) **z wagą GGUF w obrazie** | ~3,5 GB |
 
 Obraz `-ai` ma wypieczoną wagę `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (2,33 GiB, Apache-2.0)
 w `/app/models` — po `docker pull` działa od razu, **bez pobierania modelu i bez wolumenu**.
@@ -49,7 +49,7 @@ Samowystarczalny plik — zapisz jako `docker-compose.yml` w dowolnym katalogu i
 ```yaml
 services:
   app:
-    image: ghcr.io/porzeraklon/formularzex:0.2.2   # jawny tag, zero :latest
+    image: ghcr.io/porzeraklon/formularzex:0.2.3   # jawny tag, zero :latest
     ports:
       - "8000:8000"                  # wyłącznie port aplikacji
     environment:
@@ -92,7 +92,7 @@ docker compose logs -f
 ```yaml
 services:
   app:
-    image: ghcr.io/porzeraklon/formularzex:0.2.2
+    image: ghcr.io/porzeraklon/formularzex:0.2.3
     ports:
       - "8000:8000"
     env_file:
@@ -123,7 +123,7 @@ ani montować — `/health` raportuje `llm: ready` od pierwszego startu:
 ```yaml
 services:
   app-ai:
-    image: ghcr.io/porzeraklon/formularzex:0.2.2-ai
+    image: ghcr.io/porzeraklon/formularzex:0.2.3-ai
     ports:
       - "8000:8000"
     environment:
@@ -170,8 +170,8 @@ docker compose build                        # core (EXTRAS="")
 docker compose --profile ai build app-ai    # realny pipeline (EXTRAS="ai,llm,llm-api") + waga GGUF
 
 # albo ręcznie, z jawnym tagiem (zakaz :latest)
-docker build -t formularzex:0.2.2 .
-docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.2-ai .
+docker build -t formularzex:0.2.3 .
+docker build --build-arg EXTRAS=ai,llm,llm-api -t formularzex:0.2.3-ai .
 ```
 
 Build wariantu `-ai` pobiera **2,33 GiB** wagi z Hugging Face. Warstwa wag leży **przed** `COPY`
@@ -186,7 +186,7 @@ docker build --build-arg EXTRAS=ai,llm,llm-api \
   --build-arg LLM_GGUF_REVISION=a06e946bb6b655725eafa393f4a9745d460374c9 \
   --build-arg LLM_GGUF_FILE=Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
   --build-arg LLM_GGUF_SHA256=3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597 \
-  -t formularzex:0.2.2-ai .
+  -t formularzex:0.2.3-ai .
 ```
 
 Inny model otwarty = podmień te cztery argumenty (pamiętaj o licencji permisywnej i CPU).
