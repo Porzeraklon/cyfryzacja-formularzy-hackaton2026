@@ -119,3 +119,42 @@ class TestExportFromMock:
         exported = convert_formdefinition(internal)
         assert set(exported) == {"form", "notes"}
         assert [t["type"] for t in exported["form"]["tabs"]] == ["MAIN", "MAIN", "MAIN", "FINISH"]
+
+
+def test_duplicate_field_ids_get_unique_uuids():
+    from datetime import UTC, datetime
+
+    from backend.app.schemas.form_schema import (
+        FieldDefinition,
+        FieldType,
+        FormDocumentSchema,
+        FormMetadata,
+        PageDefinition,
+        SectionDefinition,
+    )
+
+    def field(field_id: str) -> FieldDefinition:
+        return FieldDefinition(field_id=field_id, name=field_id, label="Pole", field_type=FieldType.TEXT)
+
+    form = FormDocumentSchema(
+        metadata=FormMetadata(
+            form_id="dup",
+            title="Wniosek",
+            source_filename="a.pdf",
+            source_format="pdf",
+            generated_at=datetime.now(UTC),
+        ),
+        pages=[
+            PageDefinition(
+                page_id="p1",
+                title="Strona",
+                order=1,
+                sections=[
+                    SectionDefinition(section_id="s1", title="A", order=1, fields=[field("x")]),
+                    SectionDefinition(section_id="s2", title="B", order=2, fields=[field("x")]),
+                ],
+            )
+        ],
+    )
+    ids = [f["id"] for f in _iter_fields(convert_formdefinition(form)["form"])]
+    assert len(ids) == len(set(ids))

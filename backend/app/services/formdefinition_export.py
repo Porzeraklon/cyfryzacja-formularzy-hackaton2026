@@ -267,6 +267,7 @@ class _Converter:
         self._internal = internal
         self._notes: list[str] = []
         self._seed = internal.metadata.form_id or internal.metadata.title or "form"
+        self._issued_ids: set[str] = set()
         self._used_tech: set[str] = set()
         self._question_order = 0
         self._refs: dict[str, _Ref] = {}
@@ -280,7 +281,15 @@ class _Converter:
         self._proposed_by_id = {p.proposed_id: p for p in internal.dictionaries.proposed_dictionaries}
 
     def _uid(self, key: str) -> str:
-        return fd_uuid(f"{self._seed}:{key}")
+        # Deterministyczny UUID z klucza; ten sam klucz drugi raz (np. pole i grupa o tym samym
+        # field_id z LLM) dostaje kolejny wariant, bo identyfikatory w FormDefinition są unikalne.
+        uid = fd_uuid(f"{self._seed}:{key}")
+        suffix = 2
+        while uid in self._issued_ids:
+            uid = fd_uuid(f"{self._seed}:{key}#{suffix}")
+            suffix += 1
+        self._issued_ids.add(uid)
+        return uid
 
     def _unique_tech(self, base: str) -> str:
         candidate = fd_slug(base)
